@@ -1,3 +1,15 @@
+"""
+self_loops_algorithms.py
+
+Self-Loops and Zero DOT transaction Algorithms
+
+<Author>: Hanaa Abbas
+<Email>: hanaaloutfy94@gmail.com
+<Date>: 31 May, 2023
+
+GNU General Public License Version 3
+"""
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import text

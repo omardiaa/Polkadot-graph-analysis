@@ -1,20 +1,22 @@
-#  Polkascan PRE Harvester
+#  Polkadot Graph Analysis
 #
-#  Copyright 2018-2020 openAware BV (NL).
-#  This file is part of Polkascan.
+#  Copyright 2023 
+#  Author: Hanaa Abbas
+#  Email: hanaaloutfy94@gmail.com
+#  Date: 31-May 2023
 #
-#  Polkascan is free software: you can redistribute it and/or modify
+#  This project analyzes Polkadot's network through graph analysis of its full transactions graph. 
+#  The scripts included in the project are free: you can redistribute them and/or modify
 #  it under the terms of the GNU General Public License as published by
 #  the Free Software Foundation, either version 3 of the License, or
 #  (at your option) any later version.
 #
-#  Polkascan is distributed in the hope that it will be useful,
+#  The project is distributed in the hope that it will be useful,
 #  but WITHOUT ANY WARRANTY; without even the implied warranty of
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #  GNU General Public License for more details.
 #
-#  You should have received a copy of the GNU General Public License
-#  along with Polkascan. If not, see <http://www.gnu.org/licenses/>.
+#  The project fall under the GNU General Public License. 
 #
 #  __init__.py
 

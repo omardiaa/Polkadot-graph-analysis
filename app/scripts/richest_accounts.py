@@ -1,3 +1,15 @@
+"""
+richest_accounts.py
+
+Richest Accounts Algorithm
+
+<Author>: Hanaa Abbas
+<Email>: hanaaloutfy94@gmail.com
+<Date>: 31 May, 2023
+
+GNU General Public License Version 3
+"""
+
 import logging
 import sys
 import traceback

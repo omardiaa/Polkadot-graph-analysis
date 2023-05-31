@@ -1,3 +1,15 @@
+"""
+account_info_handler.py
+
+Fetching Account Info for known accounts from the substrate API.
+
+<Author>: Hanaa Abbas
+<Email>: hanaaloutfy94@gmail.com
+<Date>: 31 May, 2023
+
+GNU General Public License Version 3
+""" 
+
 import getopt
 import logging
 import sys

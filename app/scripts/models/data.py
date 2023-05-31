@@ -1,3 +1,14 @@
+"""
+data.py
+
+Database Model Objects
+
+<Author>: Hanaa Abbas
+<Email>: hanaaloutfy94@gmail.com
+<Date>: 31 May, 2023
+
+GNU General Public License Version 3
+"""
 import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.orm import relationship
