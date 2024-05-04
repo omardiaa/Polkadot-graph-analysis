@@ -180,7 +180,10 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
         event = Event.query(db_session).filter_by(block_id=block.id, extrinsic_idx=extrinsic_idx,
                                                   module_id='Balances', event_id='Withdraw').first()
         if event:
-            transaction.fee = event.attributes[1] / 10 ** token_decimals
+            if type(event.attributes) is dict:
+                transaction.fee = event.attributes['amount'] / 10 ** token_decimals
+            else:
+                transaction.fee = event.attributes[1] / 10 ** token_decimals
         else:
             old_fees = True
             transaction.fee = 0
@@ -494,8 +497,7 @@ if __name__ == '__main__':
             url = INTERNAL_URL
 
         logger.info("Substrate URL: {}".format(url))
-        with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot',
-                                use_remote_preset=True) as substrate:
+        with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot') as substrate:
 
             logger.info(
                 "Connected to chain {} using {} v {}".format(substrate.chain, substrate.name, substrate.version))
