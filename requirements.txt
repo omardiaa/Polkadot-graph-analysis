@@ -1,5 +1,5 @@
-substrate-interface==1.1.9
-scalecodec==1.0.30
+substrate-interface==1.7.8
+scalecodec==1.2.8
 mysql-connector-python~=8.0.27
 SQLAlchemy~=1.4.29
 #dictalchemy~=0.1.2.7

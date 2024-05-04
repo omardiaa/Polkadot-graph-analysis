@@ -494,8 +494,7 @@ if __name__ == '__main__':
             url = INTERNAL_URL
 
         logger.info("Substrate URL: {}".format(url))
-        with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot',
-                                use_remote_preset=True) as substrate:
+        with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot') as substrate:
 
             logger.info(
                 "Connected to chain {} using {} v {}".format(substrate.chain, substrate.name, substrate.version))
