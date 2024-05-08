@@ -18,6 +18,7 @@ import traceback
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from timeit import default_timer as timer
+import json
 
 from scalecodec.base import ScaleBytes
 from sqlalchemy import create_engine
@@ -96,15 +97,23 @@ def validate_count(block_count):
 def create_account(address, block):
     account_info = substrate.query(module='System', storage_function='Account',
                                    params=[address], block_hash=block.hash)
-    identity = substrate.query(module='Identity', storage_function='IdentityOf',
-                               params=[address], block_hash=block.hash)
 
     identity_display = None
     identity_judgement = None
 
-    if identity.value:
-        identity_display = identity.value.get('info')
-        identity_judgement = ','.join(map(str, identity.value['judgements']))
+    try:
+        identity = substrate.query(module='Identity', storage_function='IdentityOf',
+                            params=[address], block_hash=block.hash)
+        if identity.value:        
+            if isinstance(identity.value, tuple):
+                identity_value = identity.value[0]
+            else:
+                identity_value = identity.value
+            
+            identity_display = identity_value.get('info')['display']['Raw']
+            identity_judgement = ','.join(map(str, identity_value['judgements']))
+    except Exception:
+        logger.error(traceback.format_exc())
 
     # returns list of validators at that session of the block
     session = substrate.query(module='Session', storage_function='Validators',
@@ -118,14 +127,14 @@ def create_account(address, block):
     if not account:
         account = Account(
             address=address,
-            pkey_hex=substrate.ss58_decode(address),
+            pkey=substrate.ss58_decode(address),
             balance_free=account_info['data']['free'].value / 10 ** token_decimals,
             balance_reserved=account_info['data']['reserved'].value / 10 ** token_decimals,
             nonce=account_info['nonce'].value,
             created_at_block=block.id,
             updated_at_block=block.id,
             identity_display=identity_display,
-            identity_judgement=identity_judgement,
+            # identity_judgement=identity_judgement,
             is_validator=is_validator
         )
         account.save(db_session)
@@ -212,7 +221,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
                         transaction.fee += (e.attributes / 10 ** token_decimals)
 
         for param in calls:
-            if 'Balance' in param['type']:
+            if 'Balance' in param['type'] and isinstance(param['value'], int):
                 # handle redomination
                 try:
                     transaction.value = param['value'] / 10 ** token_decimals
@@ -419,6 +428,8 @@ def process_block(block_number):
                     #  way to get a decoded version of events and extrinsics based on the runtime version
                     if type(event.value['attributes']) is str:
                         addr = event.value['attributes']
+                    elif type(event.value['attributes']) is dict and 'account' in event.value['attributes']:
+                        addr = event.value['attributes']['account']
                     else:
                         addr = event.value['attributes'][0]['value']
 
@@ -448,9 +459,9 @@ def process_block(block_number):
         extrinsic_idx += 1
 
     # handle accounts creation/update
-    # for address in address_list:
-    #     create_account(address, block)
-    # create_account(block.author, block)  # create account for validator/block author
+    for address in address_list:
+        create_account(address, block)
+    create_account(block.author, block)  # create account for validator/block author
 
     block.save(db_session)
     # commit the db session
