@@ -287,7 +287,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
     return addresses
 
 
-def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx):
+def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index):
     if extrinsic.signed:
         block.count_extrinsics_signed += 1
     else:
@@ -304,6 +304,8 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx):
                 batch_calls = call['value']
                 batch_idx = 1
                 for batch_call in batch_calls:
+                    if batch_idx == batch_interrupted_index:
+                        extrinsic_success = False #For all next extrinsics in the batch as well
                     addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch_call,
                                                    batch=True, batch_idx=batch_idx)
                     batch_idx += 1
@@ -384,6 +386,7 @@ def process_block(block_number):
 
     # ==== Get block events from Substrate ==================
     extrinsic_success_idx = {}
+    extrinsic_batch_success_idx = {} #For Utility.Batch extrinsics
 
     # Events ###
     event_idx = 0
@@ -394,7 +397,6 @@ def process_block(block_number):
             print("Event {} for block {}-extrinsic {} already exists".format(event_idx, block_id,
                                                                              event.value['extrinsic_idx']))
         else:
-
             model = Event(
                 block_id=block_id,
                 event_idx=event_idx,
@@ -439,6 +441,11 @@ def process_block(block_number):
                     block.count_accounts_reaped += 1
                     logger.info("Updated Killed Account {}...".format(addr))
 
+            if event.value['module_id'] == 'Utility':
+                if event.value['event_id'] ==  'BatchInterrupted':
+                    block_extrinsic_idx = event.value['extrinsic_idx']
+                    batch_extrinsic_idx = event.value['attributes']['index']
+                    extrinsic_batch_success_idx[block_extrinsic_idx] = batch_extrinsic_idx + 1
             # TODO handle other events to figure out information about governance,
             #  staking and sessions (incl. validators and nominators)
             if event.value['module_id'] == 'Session' and event.value['event_id'] == 'NewSession':
@@ -454,7 +461,8 @@ def process_block(block_number):
             print("Transaction {} for block {} already exists".format(extrinsic_idx, block_id))
         else:
             extrinsic_success = extrinsic_success_idx.get(extrinsic_idx, False)
-            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx)
+            batch_interrupted_index = extrinsic_batch_success_idx.get(extrinsic_idx, -1)
+            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index)
             address_list.update(addresses)
         extrinsic_idx += 1
 
