@@ -104,6 +104,8 @@ class Account(BaseModel):
     index_address = sa.Column(sa.String(24), index=True)
     is_reaped = sa.Column(sa.Boolean, default=False)
 
+    is_proxy = sa.Column(sa.Boolean, default=False, index=True)
+    proxied = sa.Column(sa.Boolean, default=False, index=True)
     is_validator = sa.Column(sa.Boolean, default=False, index=True)
     was_validator = sa.Column(sa.Boolean, default=False, index=True)
     is_nominator = sa.Column(sa.Boolean, default=False, index=True)
@@ -167,6 +169,16 @@ class Event(BaseModel):
     phase = sa.Column(sa.String(100), default=None)
     attributes = sa.Column(sa.JSON())
     spec_version_id = sa.Column(sa.Integer())
+
+    def serialize_id(self):
+        return '{}-{}'.format(self.block_id, self.event_idx)
+
+class ProxyAccount(BaseModel):
+    __tablename__ = 'proxy_account'
+
+    address = sa.Column(sa.String(64), primary_key=True)
+    proxied_account_address = sa.Column(sa.String(64), primary_key=True)
+    proxy_type = sa.Column(sa.String(64))
 
     def serialize_id(self):
         return '{}-{}'.format(self.block_id, self.event_idx)

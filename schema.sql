@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`account` (
   `address` VARCHAR(64) NOT NULL,
   `pkey` VARCHAR(64) NULL DEFAULT NULL,
   `index_address` VARCHAR(24) NULL DEFAULT NULL,
+  `is_proxy` TINYINT(1) NOT NULL DEFAULT 0,
+  `proxied` TINYINT(1) NOT NULL DEFAULT 0,
   `is_reaped` TINYINT(1) NOT NULL DEFAULT 0,
   `is_validator` TINYINT(1) NOT NULL DEFAULT 0,
   `was_validator` TINYINT(1) NOT NULL DEFAULT 0,
@@ -73,6 +75,19 @@ ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8mb4
 COLLATE = utf8mb4_0900_ai_ci;
 
+
+-- -----------------------------------------------------
+-- Table `polkadot_analysis`.`proxy_account`
+-- -----------------------------------------------------
+CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`proxy_account` (
+  `address` VARCHAR(64) NOT NULL,
+  `proxied_account_address` VARCHAR(64) NOT NULL,
+  `proxy_type` VARCHAR(64) NOT NULL,
+  PRIMARY KEY (`address`, proxied_account_address)
+)
+ENGINE = InnoDB
+DEFAULT CHARACTER SET = utf8mb4
+COLLATE = utf8mb4_0900_ai_ci;
 
 -- -----------------------------------------------------
 -- Table `polkadot_analysis`.`account_history`

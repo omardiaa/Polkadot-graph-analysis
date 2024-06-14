@@ -26,7 +26,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import text
 from substrateinterface import SubstrateInterface
 
-from app.models.data import Block, Transaction, Account, Event
+from app.models.data import Block, Transaction, Account, Event, ProxyAccount
 
 DB_NAME = "polkadot_analysis"
 DB_HOST = "localhost"
@@ -93,8 +93,7 @@ def validate_count(block_count):
     except ValueError as ex:
         print(ex)
 
-
-def create_account(address, block):
+def create_account(address, block, options = {}):
     account_info = substrate.query(module='System', storage_function='Account',
                                    params=[address], block_hash=block.hash)
 
@@ -123,6 +122,9 @@ def create_account(address, block):
 
     token_decimals = substrate.token_decimals if block.id >= 1248328 else 12
 
+    is_proxy = options.get('is_proxy') or False
+    proxied = options.get('proxied') or False
+
     account = Account.query(db_session).filter_by(address=address).first()
     if not account:
         account = Account(
@@ -135,24 +137,48 @@ def create_account(address, block):
             updated_at_block=block.id,
             identity_display=identity_display,
             # identity_judgement=identity_judgement,
-            is_validator=is_validator
+            is_validator=is_validator,
+            is_proxy=is_proxy,
+            proxied=proxied
         )
         account.save(db_session)
 
     else:
         print("Previous Records for account {} exists in DB".format(address))
+        is_proxy = is_proxy or account.is_proxy
+        proxied = proxied or account.proxied
         Account.query(db_session).filter_by(
             address=address
         ).update({Account.balance_free: account_info['data']['free'].value / 10 ** token_decimals,
                   Account.balance_reserved: account_info['data']['reserved'].value / 10 ** token_decimals,
                   Account.nonce: account_info['nonce'].value,
                   Account.updated_at_block: block.id,
-                  Account.identity_judgement: identity_judgement,
+                #   Account.identity_judgement: identity_judgement,
                   Account.identity_display: identity_display,
-                  Account.is_validator: is_validator},
+                  Account.is_validator: is_validator,
+                  Account.is_proxy: is_proxy,
+                  Account.proxied: proxied},
                  synchronize_session='fetch')
         print("Updated Account {}...".format(address))
 
+def create_proxy_account(address, proxied_account_address, proxy_type):
+    account = ProxyAccount.query(db_session).filter_by(
+        address=address, proxied_account_address=proxied_account_address
+    ).first()
+    if not account:
+        account = ProxyAccount(
+            address=address,
+            proxied_account_address=proxied_account_address,
+            proxy_type=proxy_type
+        )
+        account.save(db_session)
+
+    else:
+        print("Previous Records for account {} exists in DB".format(address))
+        ProxyAccount.query(db_session).filter_by(
+            address=address, proxied_account_address=proxied_account_address
+        ).update({ProxyAccount.proxy_type: proxy_type})
+        print("Updated Account {}, {}...".format(address, proxied_account_address))
 
 def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls, batch=False, batch_idx=0):
     transaction = Transaction(
@@ -450,6 +476,19 @@ def process_block(block_number):
             #  staking and sessions (incl. validators and nominators)
             if event.value['module_id'] == 'Session' and event.value['event_id'] == 'NewSession':
                 block.count_sessions_new += 1
+
+            if event.value['module_id'] == 'Proxy':
+                if event.value['event_id'] ==  'ProxyAdded':
+                    delegator = event.value['attributes']['delegator']
+                    delegatee = event.value['attributes']['delegatee']
+                    proxy_type = event.value['attributes']['proxy_type']
+
+                    create_account(delegator, block, {'proxied': True})
+                    create_account(delegatee, block, {'is_proxy': True})
+                    create_proxy_account(delegator, delegatee, proxy_type)
+                elif event.value['event_id'] ==  'ProxyRemoved':
+                    logger.info("Proxy removed")
+                    #TODO: remove proxy account, remove account record
 
             model.save(db_session)
         event_idx += 1
