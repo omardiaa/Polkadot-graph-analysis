@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`account` (
   `index_address` VARCHAR(24) NULL DEFAULT NULL,
   `is_proxy` TINYINT(1) NOT NULL DEFAULT 0,
   `proxied` TINYINT(1) NOT NULL DEFAULT 0,
+  `is_multisig` TINYINT(1) NOT NULL DEFAULT 0,
   `is_reaped` TINYINT(1) NOT NULL DEFAULT 0,
   `is_validator` TINYINT(1) NOT NULL DEFAULT 0,
   `was_validator` TINYINT(1) NOT NULL DEFAULT 0,
@@ -69,7 +70,7 @@ CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`account` (
   INDEX `ix_account_is_nominator` (`is_nominator`),
   INDEX `ix_account_is_validator` (`is_validator`),
   INDEX `ix_account_index_address` (`index_address`),
-  INDEX `ix_account_pkey_hex` (`pkey_hex`)
+  INDEX `ix_account_pkey` (`pkey`)
 )
 ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8mb4

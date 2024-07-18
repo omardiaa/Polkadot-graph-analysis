@@ -106,6 +106,7 @@ class Account(BaseModel):
 
     is_proxy = sa.Column(sa.Boolean, default=False, index=True)
     proxied = sa.Column(sa.Boolean, default=False, index=True)
+    is_multisig = sa.Column(sa.Boolean, default=False, index=True)
     is_validator = sa.Column(sa.Boolean, default=False, index=True)
     was_validator = sa.Column(sa.Boolean, default=False, index=True)
     is_nominator = sa.Column(sa.Boolean, default=False, index=True)

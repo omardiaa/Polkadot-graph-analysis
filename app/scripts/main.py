@@ -124,6 +124,7 @@ def create_account(address, block, options = {}):
 
     is_proxy = options.get('is_proxy') or False
     proxied = options.get('proxied') or False
+    is_multisig = options.get('is_multisig') or False
 
     account = Account.query(db_session).filter_by(address=address).first()
     if not account:
@@ -139,7 +140,8 @@ def create_account(address, block, options = {}):
             # identity_judgement=identity_judgement,
             is_validator=is_validator,
             is_proxy=is_proxy,
-            proxied=proxied
+            proxied=proxied,
+            is_multisig=is_multisig
         )
         account.save(db_session)
 
@@ -147,6 +149,8 @@ def create_account(address, block, options = {}):
         print("Previous Records for account {} exists in DB".format(address))
         is_proxy = is_proxy or account.is_proxy
         proxied = proxied or account.proxied
+        is_multisig = is_multisig or account.is_multisig
+
         Account.query(db_session).filter_by(
             address=address
         ).update({Account.balance_free: account_info['data']['free'].value / 10 ** token_decimals,
@@ -157,7 +161,8 @@ def create_account(address, block, options = {}):
                   Account.identity_display: identity_display,
                   Account.is_validator: is_validator,
                   Account.is_proxy: is_proxy,
-                  Account.proxied: proxied},
+                  Account.proxied: proxied,
+                  Account.is_multisig: is_multisig},
                  synchronize_session='fetch')
         print("Updated Account {}...".format(address))
 
@@ -313,13 +318,13 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
     return addresses
 
 
-def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index):
+def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index, multisig_status):
     if extrinsic.signed:
         block.count_extrinsics_signed += 1
     else:
         block.count_extrinsics_unsigned += 1
 
-    call_args = extrinsic.value["call"]['call_args']
+    call_args = extrinsic.value["call"]['call_args']    
     addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, call_args)
 
     if extrinsic.value['call']['call_module'] == 'Utility':
@@ -332,9 +337,21 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch
                 for batch_call in batch_calls:
                     if batch_idx == batch_interrupted_index:
                         extrinsic_success = False #For all next extrinsics in the batch as well
-                    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch_call,
-                                                   batch=True, batch_idx=batch_idx)
+                    addresses.extend(process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch_call,
+                                                   batch=True, batch_idx=batch_idx))
                     batch_idx += 1
+
+    if extrinsic.value['call']['call_module'] == 'Multisig' and multisig_status:
+        logger.info("Multisig Extrinsic {}...".format(extrinsic.value["call"]["call_function"]))
+        call_args = extrinsic.value['call']['call_args']
+
+        for call in call_args:
+            if call['name'] == 'call':
+                call_args = call['value']
+                addresses.extend(process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, call_args, batch=True, batch_idx= 1))
+                #TODO: check if fees applied on this transactions are correct and consider multisig deposits
+                #TODO: batch_idx=1 to make the new extrinsic unique, treating it similar to the Utility.batch
+                
 
     return block, addresses
 
@@ -413,6 +430,7 @@ def process_block(block_number):
     # ==== Get block events from Substrate ==================
     extrinsic_success_idx = {}
     extrinsic_batch_success_idx = {} #For Utility.Batch extrinsics
+    multisig_status_idx = {} #For Multisig extrinsics
 
     # Events ###
     event_idx = 0
@@ -490,6 +508,14 @@ def process_block(block_number):
                     logger.info("Proxy removed")
                     #TODO: remove proxy account, remove account record
 
+            if event.value['module_id'] == 'Multisig':
+                if event.value['event_id'] == 'MultisigExecuted':
+                    multisig = event.value['attributes']['multisig']
+                    create_account(multisig, block, {'is_multisig': True})
+
+                    extrinsic_idx = event.value['extrinsic_idx']
+                    multisig_status_idx[extrinsic_idx] = True
+
             model.save(db_session)
         event_idx += 1
 
@@ -501,7 +527,8 @@ def process_block(block_number):
         else:
             extrinsic_success = extrinsic_success_idx.get(extrinsic_idx, False)
             batch_interrupted_index = extrinsic_batch_success_idx.get(extrinsic_idx, -1)
-            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index)
+            multisig_status = multisig_status_idx.get(extrinsic_idx) or False
+            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index, multisig_status)
             address_list.update(addresses)
         extrinsic_idx += 1
 
