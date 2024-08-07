@@ -68,6 +68,8 @@ class Transaction(BaseModel):
     block_id = sa.Column(sa.Integer(), primary_key=True, index=True)
     block = relationship(Block, foreign_keys=[block_id], primaryjoin=block_id == Block.id)
     extrinsic_idx = sa.Column(sa.Integer(), primary_key=True, index=True)
+    nesting_idx = sa.Column(sa.Integer(), primary_key=True, index=True,
+                        default=0)  # Added to handle nested transactions like Utiltiy, Proxy, Multisig
     batch_idx = sa.Column(sa.Integer(), primary_key=True, index=True,
                           default=0)  # Added to handle Utility Batch extrinsics
     extrinsic_length = sa.Column(sa.String(10))
@@ -93,7 +95,7 @@ class Transaction(BaseModel):
     timestamp = sa.Column(sa.BigInteger(), nullable=True)
 
     def serialize_id(self):
-        return '{}-{}-{}'.format(self.block_id, self.extrinsic_idx, self.batch_idx)
+        return '{}-{}-{}'.format(self.block_id, self.extrinsic_idx, self.nesting_idx, self.batch_idx)
 
 
 class Account(BaseModel):

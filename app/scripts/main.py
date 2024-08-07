@@ -19,6 +19,7 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from timeit import default_timer as timer
 import json
+import copy
 
 from scalecodec.base import ScaleBytes
 from sqlalchemy import create_engine
@@ -185,10 +186,11 @@ def create_proxy_account(address, proxied_account_address, proxy_type):
         ).update({ProxyAccount.proxy_type: proxy_type})
         print("Updated Account {}, {}...".format(address, proxied_account_address))
 
-def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls, batch=False, batch_idx=0):
+def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
     transaction = Transaction(
         block_id=block.id,
         extrinsic_idx=extrinsic_idx,
+        nesting_idx=nesting_idx,
         batch_idx=batch_idx,
         extrinsic_length=extrinsic.value['extrinsic_length'],
         extrinsic_hash=extrinsic.value['extrinsic_hash'],
@@ -202,13 +204,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
         timestamp=block.timestamp
     )
 
-    if batch:
-        transaction.module_id = calls['call_module']
-        transaction.call_id = calls['call_function']
-        transaction.extrinsic_hash = calls['call_hash']
-        # transaction.debug_info = calls['call_args']
-        transaction.extrinsic_length = 0  # the total length is included in the batch extrinsic
-        calls = calls['call_args']
+    call_args = extrinsic.value['call']['call_args']
 
     addresses = []
     token_decimals = substrate.token_decimals if block.id >= 1248328 else 12
@@ -219,6 +215,8 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
         # get transaction fee
         event = Event.query(db_session).filter_by(block_id=block.id, extrinsic_idx=extrinsic_idx,
                                                   module_id='Balances', event_id='Withdraw').first()
+        #TODO: remove this query, additional database access that can be optimized
+
         if event:
             if type(event.attributes) is dict:
                 transaction.fee = event.attributes['amount'] / 10 ** token_decimals
@@ -251,7 +249,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
                     else:
                         transaction.fee += (e.attributes / 10 ** token_decimals)
 
-        for param in calls:
+        for param in call_args:
             if 'Balance' in param['type'] and isinstance(param['value'], int):
                 # handle redomination
                 try:
@@ -317,17 +315,27 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
     transaction.save(db_session)
     return addresses
 
+def construct_extrinsic_value(extrinsic, call):
+    new_extrinsic = copy.deepcopy(extrinsic)
+    new_extrinsic.value["extrinsic_length"] = 0 # Total length is in the original extrinsic
+    new_extrinsic.value["call"] = call
+    return new_extrinsic
 
-def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index, multisig_status):
+
+def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status):
     if extrinsic.signed:
         block.count_extrinsics_signed += 1
     else:
         block.count_extrinsics_unsigned += 1
 
     call_args = extrinsic.value["call"]['call_args']    
-    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, call_args)
+    
+    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch, nesting_idx, batch_idx)
+    #TODO: Update addresses, not the complete list
 
-    if extrinsic.value['call']['call_module'] == 'Utility':
+    call_module = extrinsic.value['call']['call_module']
+
+    if call_module == 'Utility':
         logger.info("Utility Extrinsic {}...".format(extrinsic.value["call"]["call_function"]))
         # handling batch transactions
         for call in call_args:
@@ -337,24 +345,25 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch
                 for batch_call in batch_calls:
                     if batch_idx == batch_interrupted_index:
                         extrinsic_success = False #For all next extrinsics in the batch as well
-                    addresses.extend(process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch_call,
-                                                   batch=True, batch_idx=batch_idx))
+                    new_extrinsic = construct_extrinsic_value(extrinsic, batch_call)
+                    #extrinsic.value["call"]['call_args']
+                    create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status)
+                    # Complete list of account ids should be updated
                     batch_idx += 1
 
-    if extrinsic.value['call']['call_module'] == 'Multisig' and multisig_status:
-        logger.info("Multisig Extrinsic {}...".format(extrinsic.value["call"]["call_function"]))
+    if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy'):
+        #TODO: Handle if proxy failed, proxy_status
+        logger.info("{} Extrinsic {}...".format(call_module, extrinsic.value["call"]["call_function"]))
         call_args = extrinsic.value['call']['call_args']
 
         for call in call_args:
             if call['name'] == 'call':
                 call_args = call['value']
-                addresses.extend(process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, call_args, batch=True, batch_idx= 1))
-                #TODO: check if fees applied on this transactions are correct and consider multisig deposits
-                #TODO: batch_idx=1 to make the new extrinsic unique, treating it similar to the Utility.batch
-                
+              
+                new_extrinsic = construct_extrinsic_value(extrinsic, call_args)
+                create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status)
 
     return block, addresses
-
 
 def process_block(block_number):
     if Block.query(db_session).filter_by(id=block_number).count() > 0:
@@ -520,6 +529,10 @@ def process_block(block_number):
         event_idx += 1
 
     extrinsic_idx = 0
+    nesting_idx = 0
+    batch_idx = 0
+    batch = False
+
     address_list = set()
     for extrinsic in extrinsics_data:
         if Transaction.query(db_session).filter_by(block_id=block_id, extrinsic_idx=extrinsic_idx).count() > 0:
@@ -528,7 +541,8 @@ def process_block(block_number):
             extrinsic_success = extrinsic_success_idx.get(extrinsic_idx, False)
             batch_interrupted_index = extrinsic_batch_success_idx.get(extrinsic_idx, -1)
             multisig_status = multisig_status_idx.get(extrinsic_idx) or False
-            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, batch_interrupted_index, multisig_status)
+            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch,  batch_idx, batch_interrupted_index, multisig_status)
+
             address_list.update(addresses)
         extrinsic_idx += 1
 

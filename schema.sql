@@ -183,6 +183,7 @@ COLLATE = utf8mb4_0900_ai_ci;
 CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`extrinsic` (
   `block_id` INT NOT NULL,
   `extrinsic_idx` INT NOT NULL,
+  `nesting_idx` INT NOT NULL DEFAULT '0',
   `batch_idx` INT NOT NULL DEFAULT '0',
   `extrinsic_length` VARCHAR(10) NULL DEFAULT NULL,
   `extrinsic_hash` VARCHAR(66) NULL DEFAULT NULL,
@@ -201,7 +202,7 @@ CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`extrinsic` (
   `debug_info` JSON NULL DEFAULT NULL,
   `timestamp` BIGINT NULL DEFAULT NULL,
   `datetime` DATETIME NULL DEFAULT NULL,
-  PRIMARY KEY (`block_id`, `extrinsic_idx`, `batch_idx`),
+  PRIMARY KEY (`block_id`, `extrinsic_idx`, `nesting_idx`, `batch_idx`),
   INDEX `ix_extrinsic_from_address` (`from_address` ASC) INVISIBLE,
   INDEX `ix_extrinsic_block_id` (`block_id` ASC) VISIBLE,
   INDEX `ix_extrinsic_call_id` (`call_id` ASC) VISIBLE,
@@ -224,7 +225,7 @@ AFTER INSERT ON `polkadot_analysis`.`account`
 FOR EACH ROW
 INSERT INTO account_history SELECT NULL, 
 d.address, d.balance_free, d.balance_reserved, d.is_reaped, d.is_validator, d.is_nominator, d.is_council_member,
-d.is_tech_comm_member, d.is_registrar, d.is_sudo, d.is_treasury, d.identity_display, d.identity_judgement, d.updated_at_block
+d.is_tech_comm_member, d.is_registrar, d.is_sudo, d.is_treasury, d.identity_display, d.updated_at_block
     FROM account AS d WHERE d.address = NEW.address$$
 
 USE `polkadot_analysis`$$
@@ -235,7 +236,7 @@ AFTER UPDATE ON `polkadot_analysis`.`account`
 FOR EACH ROW
 INSERT INTO account_history SELECT NULL, 
 d.address, d.balance_free, d.balance_reserved, d.is_reaped, d.is_validator, d.is_nominator, d.is_council_member,
-d.is_tech_comm_member, d.is_registrar, d.is_sudo, d.is_treasury, d.identity_display, d.identity_judgement, d.updated_at_block
+d.is_tech_comm_member, d.is_registrar, d.is_sudo, d.is_treasury, d.identity_display, d.updated_at_block
     FROM account AS d WHERE d.address = NEW.address$$
 
 
