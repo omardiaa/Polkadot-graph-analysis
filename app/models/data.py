@@ -68,6 +68,8 @@ class Transaction(BaseModel):
     block_id = sa.Column(sa.Integer(), primary_key=True, index=True)
     block = relationship(Block, foreign_keys=[block_id], primaryjoin=block_id == Block.id)
     extrinsic_idx = sa.Column(sa.Integer(), primary_key=True, index=True)
+    nesting_idx = sa.Column(sa.Integer(), primary_key=True, index=True,
+                        default=0)  # Added to handle nested transactions like Utiltiy, Proxy, Multisig
     batch_idx = sa.Column(sa.Integer(), primary_key=True, index=True,
                           default=0)  # Added to handle Utility Batch extrinsics
     extrinsic_length = sa.Column(sa.String(10))
@@ -93,7 +95,7 @@ class Transaction(BaseModel):
     timestamp = sa.Column(sa.BigInteger(), nullable=True)
 
     def serialize_id(self):
-        return '{}-{}-{}'.format(self.block_id, self.extrinsic_idx, self.batch_idx)
+        return '{}-{}-{}'.format(self.block_id, self.extrinsic_idx, self.nesting_idx, self.batch_idx)
 
 
 class Account(BaseModel):
@@ -104,6 +106,9 @@ class Account(BaseModel):
     index_address = sa.Column(sa.String(24), index=True)
     is_reaped = sa.Column(sa.Boolean, default=False)
 
+    is_proxy = sa.Column(sa.Boolean, default=False, index=True)
+    proxied = sa.Column(sa.Boolean, default=False, index=True)
+    is_multisig = sa.Column(sa.Boolean, default=False, index=True)
     is_validator = sa.Column(sa.Boolean, default=False, index=True)
     was_validator = sa.Column(sa.Boolean, default=False, index=True)
     is_nominator = sa.Column(sa.Boolean, default=False, index=True)
@@ -167,6 +172,16 @@ class Event(BaseModel):
     phase = sa.Column(sa.String(100), default=None)
     attributes = sa.Column(sa.JSON())
     spec_version_id = sa.Column(sa.Integer())
+
+    def serialize_id(self):
+        return '{}-{}'.format(self.block_id, self.event_idx)
+
+class ProxyAccount(BaseModel):
+    __tablename__ = 'proxy_account'
+
+    address = sa.Column(sa.String(64), primary_key=True)
+    proxied_account_address = sa.Column(sa.String(64), primary_key=True)
+    proxy_type = sa.Column(sa.String(64))
 
     def serialize_id(self):
         return '{}-{}'.format(self.block_id, self.event_idx)

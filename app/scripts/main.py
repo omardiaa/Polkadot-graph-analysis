@@ -18,6 +18,8 @@ import traceback
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from timeit import default_timer as timer
+import json
+import copy
 
 from scalecodec.base import ScaleBytes
 from sqlalchemy import create_engine
@@ -25,7 +27,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import text
 from substrateinterface import SubstrateInterface
 
-from app.models.data import Block, Transaction, Account, Event
+from app.models.data import Block, Transaction, Account, Event, ProxyAccount
 
 DB_NAME = "polkadot_analysis"
 DB_HOST = "localhost"
@@ -92,19 +94,26 @@ def validate_count(block_count):
     except ValueError as ex:
         print(ex)
 
-
-def create_account(address, block):
+def create_account(address, block, options = {}):
     account_info = substrate.query(module='System', storage_function='Account',
                                    params=[address], block_hash=block.hash)
-    identity = substrate.query(module='Identity', storage_function='IdentityOf',
-                               params=[address], block_hash=block.hash)
 
     identity_display = None
     identity_judgement = None
 
-    if identity.value:
-        identity_display = identity.value.get('info')
-        identity_judgement = ','.join(map(str, identity.value['judgements']))
+    try:
+        identity = substrate.query(module='Identity', storage_function='IdentityOf',
+                            params=[address], block_hash=block.hash)
+        if identity.value:        
+            if isinstance(identity.value, tuple):
+                identity_value = identity.value[0]
+            else:
+                identity_value = identity.value
+            
+            identity_display = identity_value.get('info')['display']['Raw']
+            identity_judgement = ','.join(map(str, identity_value['judgements']))
+    except Exception:
+        logger.error(traceback.format_exc())
 
     # returns list of validators at that session of the block
     session = substrate.query(module='Session', storage_function='Validators',
@@ -114,41 +123,74 @@ def create_account(address, block):
 
     token_decimals = substrate.token_decimals if block.id >= 1248328 else 12
 
+    is_proxy = options.get('is_proxy') or False
+    proxied = options.get('proxied') or False
+    is_multisig = options.get('is_multisig') or False
+
     account = Account.query(db_session).filter_by(address=address).first()
     if not account:
         account = Account(
             address=address,
-            pkey_hex=substrate.ss58_decode(address),
+            pkey=substrate.ss58_decode(address),
             balance_free=account_info['data']['free'].value / 10 ** token_decimals,
             balance_reserved=account_info['data']['reserved'].value / 10 ** token_decimals,
             nonce=account_info['nonce'].value,
             created_at_block=block.id,
             updated_at_block=block.id,
             identity_display=identity_display,
-            identity_judgement=identity_judgement,
-            is_validator=is_validator
+            # identity_judgement=identity_judgement,
+            is_validator=is_validator,
+            is_proxy=is_proxy,
+            proxied=proxied,
+            is_multisig=is_multisig
         )
         account.save(db_session)
 
     else:
         print("Previous Records for account {} exists in DB".format(address))
+        is_proxy = is_proxy or account.is_proxy
+        proxied = proxied or account.proxied
+        is_multisig = is_multisig or account.is_multisig
+
         Account.query(db_session).filter_by(
             address=address
         ).update({Account.balance_free: account_info['data']['free'].value / 10 ** token_decimals,
                   Account.balance_reserved: account_info['data']['reserved'].value / 10 ** token_decimals,
                   Account.nonce: account_info['nonce'].value,
                   Account.updated_at_block: block.id,
-                  Account.identity_judgement: identity_judgement,
+                #   Account.identity_judgement: identity_judgement,
                   Account.identity_display: identity_display,
-                  Account.is_validator: is_validator},
+                  Account.is_validator: is_validator,
+                  Account.is_proxy: is_proxy,
+                  Account.proxied: proxied,
+                  Account.is_multisig: is_multisig},
                  synchronize_session='fetch')
         print("Updated Account {}...".format(address))
 
+def create_proxy_account(address, proxied_account_address, proxy_type):
+    account = ProxyAccount.query(db_session).filter_by(
+        address=address, proxied_account_address=proxied_account_address
+    ).first()
+    if not account:
+        account = ProxyAccount(
+            address=address,
+            proxied_account_address=proxied_account_address,
+            proxy_type=proxy_type
+        )
+        account.save(db_session)
 
-def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls, batch=False, batch_idx=0):
+    else:
+        print("Previous Records for account {} exists in DB".format(address))
+        ProxyAccount.query(db_session).filter_by(
+            address=address, proxied_account_address=proxied_account_address
+        ).update({ProxyAccount.proxy_type: proxy_type})
+        print("Updated Account {}, {}...".format(address, proxied_account_address))
+
+def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
     transaction = Transaction(
         block_id=block.id,
         extrinsic_idx=extrinsic_idx,
+        nesting_idx=nesting_idx,
         batch_idx=batch_idx,
         extrinsic_length=extrinsic.value['extrinsic_length'],
         extrinsic_hash=extrinsic.value['extrinsic_hash'],
@@ -162,13 +204,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
         timestamp=block.timestamp
     )
 
-    if batch:
-        transaction.module_id = calls['call_module']
-        transaction.call_id = calls['call_function']
-        transaction.extrinsic_hash = calls['call_hash']
-        # transaction.debug_info = calls['call_args']
-        transaction.extrinsic_length = 0  # the total length is included in the batch extrinsic
-        calls = calls['call_args']
+    call_args = extrinsic.value['call']['call_args']
 
     addresses = []
     token_decimals = substrate.token_decimals if block.id >= 1248328 else 12
@@ -179,8 +215,13 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
         # get transaction fee
         event = Event.query(db_session).filter_by(block_id=block.id, extrinsic_idx=extrinsic_idx,
                                                   module_id='Balances', event_id='Withdraw').first()
+        #TODO: remove this query, additional database access that can be optimized
+
         if event:
-            transaction.fee = event.attributes[1] / 10 ** token_decimals
+            if type(event.attributes) is dict:
+                transaction.fee = event.attributes['amount'] / 10 ** token_decimals
+            else:
+                transaction.fee = event.attributes[1] / 10 ** token_decimals
         else:
             old_fees = True
             transaction.fee = 0
@@ -208,8 +249,8 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
                     else:
                         transaction.fee += (e.attributes / 10 ** token_decimals)
 
-        for param in calls:
-            if 'Balance' in param['type']:
+        for param in call_args:
+            if 'Balance' in param['type'] and isinstance(param['value'], int):
                 # handle redomination
                 try:
                     transaction.value = param['value'] / 10 ** token_decimals
@@ -274,17 +315,27 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, calls
     transaction.save(db_session)
     return addresses
 
+def construct_extrinsic_value(extrinsic, call):
+    new_extrinsic = copy.deepcopy(extrinsic)
+    new_extrinsic.value["extrinsic_length"] = 0 # Total length is in the original extrinsic
+    new_extrinsic.value["call"] = call
+    return new_extrinsic
 
-def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx):
+
+def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status):
     if extrinsic.signed:
         block.count_extrinsics_signed += 1
     else:
         block.count_extrinsics_unsigned += 1
 
-    call_args = extrinsic.value["call"]['call_args']
-    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, call_args)
+    call_args = extrinsic.value["call"]['call_args']    
+    
+    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch, nesting_idx, batch_idx)
+    #TODO: Update addresses, not the complete list
 
-    if extrinsic.value['call']['call_module'] == 'Utility':
+    call_module = extrinsic.value['call']['call_module']
+
+    if call_module == 'Utility':
         logger.info("Utility Extrinsic {}...".format(extrinsic.value["call"]["call_function"]))
         # handling batch transactions
         for call in call_args:
@@ -292,12 +343,27 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx):
                 batch_calls = call['value']
                 batch_idx = 1
                 for batch_call in batch_calls:
-                    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch_call,
-                                                   batch=True, batch_idx=batch_idx)
+                    if batch_idx == batch_interrupted_index:
+                        extrinsic_success = False #For all next extrinsics in the batch as well
+                    new_extrinsic = construct_extrinsic_value(extrinsic, batch_call)
+                    #extrinsic.value["call"]['call_args']
+                    create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status)
+                    # Complete list of account ids should be updated
                     batch_idx += 1
 
-    return block, addresses
+    if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy'):
+        #TODO: Handle if proxy failed, proxy_status
+        logger.info("{} Extrinsic {}...".format(call_module, extrinsic.value["call"]["call_function"]))
+        call_args = extrinsic.value['call']['call_args']
 
+        for call in call_args:
+            if call['name'] == 'call':
+                call_args = call['value']
+              
+                new_extrinsic = construct_extrinsic_value(extrinsic, call_args)
+                create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status)
+
+    return block, addresses
 
 def process_block(block_number):
     if Block.query(db_session).filter_by(id=block_number).count() > 0:
@@ -372,6 +438,8 @@ def process_block(block_number):
 
     # ==== Get block events from Substrate ==================
     extrinsic_success_idx = {}
+    extrinsic_batch_success_idx = {} #For Utility.Batch extrinsics
+    multisig_status_idx = {} #For Multisig extrinsics
 
     # Events ###
     event_idx = 0
@@ -382,7 +450,6 @@ def process_block(block_number):
             print("Event {} for block {}-extrinsic {} already exists".format(event_idx, block_id,
                                                                              event.value['extrinsic_idx']))
         else:
-
             model = Event(
                 block_id=block_id,
                 event_idx=event_idx,
@@ -416,6 +483,8 @@ def process_block(block_number):
                     #  way to get a decoded version of events and extrinsics based on the runtime version
                     if type(event.value['attributes']) is str:
                         addr = event.value['attributes']
+                    elif type(event.value['attributes']) is dict and 'account' in event.value['attributes']:
+                        addr = event.value['attributes']['account']
                     else:
                         addr = event.value['attributes'][0]['value']
 
@@ -425,29 +494,62 @@ def process_block(block_number):
                     block.count_accounts_reaped += 1
                     logger.info("Updated Killed Account {}...".format(addr))
 
+            if event.value['module_id'] == 'Utility':
+                if event.value['event_id'] ==  'BatchInterrupted':
+                    block_extrinsic_idx = event.value['extrinsic_idx']
+                    batch_extrinsic_idx = event.value['attributes']['index']
+                    extrinsic_batch_success_idx[block_extrinsic_idx] = batch_extrinsic_idx + 1
             # TODO handle other events to figure out information about governance,
             #  staking and sessions (incl. validators and nominators)
             if event.value['module_id'] == 'Session' and event.value['event_id'] == 'NewSession':
                 block.count_sessions_new += 1
 
+            if event.value['module_id'] == 'Proxy':
+                if event.value['event_id'] ==  'ProxyAdded':
+                    delegator = event.value['attributes']['delegator']
+                    delegatee = event.value['attributes']['delegatee']
+                    proxy_type = event.value['attributes']['proxy_type']
+
+                    create_account(delegator, block, {'proxied': True})
+                    create_account(delegatee, block, {'is_proxy': True})
+                    create_proxy_account(delegator, delegatee, proxy_type)
+                elif event.value['event_id'] ==  'ProxyRemoved':
+                    logger.info("Proxy removed")
+                    #TODO: remove proxy account, remove account record
+
+            if event.value['module_id'] == 'Multisig':
+                if event.value['event_id'] == 'MultisigExecuted':
+                    multisig = event.value['attributes']['multisig']
+                    create_account(multisig, block, {'is_multisig': True})
+
+                    extrinsic_idx = event.value['extrinsic_idx']
+                    multisig_status_idx[extrinsic_idx] = True
+
             model.save(db_session)
         event_idx += 1
 
     extrinsic_idx = 0
+    nesting_idx = 0
+    batch_idx = 0
+    batch = False
+
     address_list = set()
     for extrinsic in extrinsics_data:
         if Transaction.query(db_session).filter_by(block_id=block_id, extrinsic_idx=extrinsic_idx).count() > 0:
             print("Transaction {} for block {} already exists".format(extrinsic_idx, block_id))
         else:
             extrinsic_success = extrinsic_success_idx.get(extrinsic_idx, False)
-            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx)
+            batch_interrupted_index = extrinsic_batch_success_idx.get(extrinsic_idx, -1)
+            multisig_status = multisig_status_idx.get(extrinsic_idx) or False
+            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch,  batch_idx, batch_interrupted_index, multisig_status)
+
             address_list.update(addresses)
         extrinsic_idx += 1
 
     # handle accounts creation/update
-    # for address in address_list:
-    #     create_account(address, block)
-    # create_account(block.author, block)  # create account for validator/block author
+    for address in address_list:
+        create_account(address, block)
+    create_account(block.author, block)  # create account for validator/block author
 
     block.save(db_session)
     # commit the db session
@@ -494,8 +596,7 @@ if __name__ == '__main__':
             url = INTERNAL_URL
 
         logger.info("Substrate URL: {}".format(url))
-        with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot',
-                                use_remote_preset=True) as substrate:
+        with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot') as substrate:
 
             logger.info(
                 "Connected to chain {} using {} v {}".format(substrate.chain, substrate.name, substrate.version))
