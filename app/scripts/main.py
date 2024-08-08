@@ -279,6 +279,10 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
                         addresses.append(transaction.to_address)
                 except Exception: # to catch exceptions such as substrate errors (Invalid length for address)
                     logger.error(traceback.format_exc())
+            elif param['type'] == 'AccountIdLookupOf':
+                transaction.to_address = param['value']
+                if substrate.is_valid_ss58_address(transaction.to_address):
+                    addresses.append(transaction.to_address)
 
         if 'address' in extrinsic:
             transaction.from_address = extrinsic.value['address'].replace('0x', '')
@@ -322,7 +326,7 @@ def construct_extrinsic_value(extrinsic, call):
     return new_extrinsic
 
 
-def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status):
+def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status, proxy_status):
     if extrinsic.signed:
         block.count_extrinsics_signed += 1
     else:
@@ -347,11 +351,16 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                         extrinsic_success = False #For all next extrinsics in the batch as well
                     new_extrinsic = construct_extrinsic_value(extrinsic, batch_call)
                     #extrinsic.value["call"]['call_args']
-                    create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status)
-                    # Complete list of account ids should be updated
+                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                    addresses.extend(new_addresses)
                     batch_idx += 1
+            elif call['name'] == 'call': # Utility.as_declarative: Dispatch a call from a derivative signed origin
+                batch_idx = 1
+                new_extrinsic = construct_extrinsic_value(extrinsic, call['value'])
+                _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                addresses.extend(new_addresses)
 
-    if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy'):
+    if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy' and proxy_status):
         #TODO: Handle if proxy failed, proxy_status
         logger.info("{} Extrinsic {}...".format(call_module, extrinsic.value["call"]["call_function"]))
         call_args = extrinsic.value['call']['call_args']
@@ -361,7 +370,8 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                 call_args = call['value']
               
                 new_extrinsic = construct_extrinsic_value(extrinsic, call_args)
-                create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status)
+                _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                addresses.extend(new_addresses)
 
     return block, addresses
 
@@ -440,6 +450,7 @@ def process_block(block_number):
     extrinsic_success_idx = {}
     extrinsic_batch_success_idx = {} #For Utility.Batch extrinsics
     multisig_status_idx = {} #For Multisig extrinsics
+    proxy_status_idx = {} #For Proxy extrinsics
 
     # Events ###
     event_idx = 0
@@ -516,6 +527,9 @@ def process_block(block_number):
                 elif event.value['event_id'] ==  'ProxyRemoved':
                     logger.info("Proxy removed")
                     #TODO: remove proxy account, remove account record
+                elif event.value['event_id'] == 'ProxyExecuted':
+                    extrinsic_idx = event.value['extrinsic_idx']
+                    proxy_status_idx[extrinsic_idx] = True
 
             if event.value['module_id'] == 'Multisig':
                 if event.value['event_id'] == 'MultisigExecuted':
@@ -541,7 +555,9 @@ def process_block(block_number):
             extrinsic_success = extrinsic_success_idx.get(extrinsic_idx, False)
             batch_interrupted_index = extrinsic_batch_success_idx.get(extrinsic_idx, -1)
             multisig_status = multisig_status_idx.get(extrinsic_idx) or False
-            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch,  batch_idx, batch_interrupted_index, multisig_status)
+            proxy_status = proxy_status_idx.get(extrinsic_idx) or False
+
+            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch,  batch_idx, batch_interrupted_index, multisig_status, proxy_status)
 
             address_list.update(addresses)
         extrinsic_idx += 1
