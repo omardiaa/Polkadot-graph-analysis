@@ -363,15 +363,16 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
     if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy' and proxy_status):
         #TODO: Handle if proxy failed, proxy_status
         logger.info("{} Extrinsic {}...".format(call_module, extrinsic.value["call"]["call_function"]))
-        call_args = extrinsic.value['call']['call_args']
 
         for call in call_args:
             if call['name'] == 'call':
-                call_args = call['value']
-              
-                new_extrinsic = construct_extrinsic_value(extrinsic, call_args)
-                _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
-                addresses.extend(new_addresses)
+                internal_call_args = call['value']
+                if type(internal_call_args) is dict:
+                    new_extrinsic = construct_extrinsic_value(extrinsic, internal_call_args)
+                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                    addresses.extend(new_addresses)
+                else:
+                    logger.warning("Nested Extrinsic {} in block {} skipped because of encoded calls".format(call_module, block.id))
 
     return block, addresses
 
@@ -508,7 +509,12 @@ def process_block(block_number):
             if event.value['module_id'] == 'Utility':
                 if event.value['event_id'] ==  'BatchInterrupted':
                     block_extrinsic_idx = event.value['extrinsic_idx']
-                    batch_extrinsic_idx = event.value['attributes']['index']
+                    batch_extrinsic_idx = 0
+                    if isinstance(event.value['attributes'], list):
+                        batch_extrinsic_idx = event.value['attributes'][0]['value']
+                    elif 'index' in event.value['attributes']:
+                        batch_extrinsic_idx = event.value['attributes']['index']
+                        
                     extrinsic_batch_success_idx[block_extrinsic_idx] = batch_extrinsic_idx + 1
             # TODO handle other events to figure out information about governance,
             #  staking and sessions (incl. validators and nominators)
@@ -533,8 +539,17 @@ def process_block(block_number):
 
             if event.value['module_id'] == 'Multisig':
                 if event.value['event_id'] == 'MultisigExecuted':
-                    multisig = event.value['attributes']['multisig']
-                    create_account(multisig, block, {'is_multisig': True})
+                    create_multisig_account = False
+                    if isinstance(event.value['attributes'], list):
+                        # [0] is sender address, [2] is multisig address
+                        multisig = event.value['attributes'][2]['value']
+                        create_multisig_account = True
+                    elif type(event.value['attributes']) is dict and 'multisig' in event.value['attributes']:
+                        multisig = event.value['attributes']['multisig']
+                        create_multisig_account = True
+
+                    if create_multisig_account:
+                        create_account(multisig, block, {'is_multisig': True})
 
                     extrinsic_idx = event.value['extrinsic_idx']
                     multisig_status_idx[extrinsic_idx] = True
