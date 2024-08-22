@@ -109,16 +109,18 @@ def create_account(address, block, options = {}):
     identity_judgement = None
 
     try:
-        identity = substrate.query(module='Identity', storage_function='IdentityOf',
-                            params=[address], block_hash=block.hash)
-        if identity.value:        
-            if isinstance(identity.value, tuple):
-                identity_value = identity.value[0]
-            else:
-                identity_value = identity.value
-            
-            identity_display = identity_value.get('info')['display']['Raw']
-            identity_judgement = ','.join(map(str, identity_value['judgements']))
+        # Identity Pallet got added to polkadot on Jun 9th 2020, after block 188_837
+        if block.id > 188_837:
+            identity = substrate.query(module='Identity', storage_function='IdentityOf',
+                                params=[address], block_hash=block.hash)
+            if identity.value:        
+                if isinstance(identity.value, tuple):
+                    identity_value = identity.value[0]
+                else:
+                    identity_value = identity.value
+                
+                identity_display = identity_value.get('info')['display']['Raw']
+                identity_judgement = ','.join(map(str, identity_value['judgements']))
     except Exception:
         create_error_log(block.id, traceback.format_exc())
         logger.error(traceback.format_exc())
