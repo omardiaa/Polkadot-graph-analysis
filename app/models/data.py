@@ -185,3 +185,10 @@ class ProxyAccount(BaseModel):
 
     def serialize_id(self):
         return '{}-{}'.format(self.block_id, self.event_idx)
+
+class ErrorLog(BaseModel):
+    __tablename__ = 'error_log'
+
+    id = sa.Column(sa.Integer(), primary_key=True, autoincrement=True)
+    block_id = sa.Column(sa.Integer(), index=True)
+    error_log = sa.Column(sa.String(1500), index=True)

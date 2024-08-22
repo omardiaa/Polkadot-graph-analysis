@@ -214,6 +214,21 @@ ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8mb4
 COLLATE = utf8mb4_0900_ai_ci;
 
+-- -----------------------------------------------------
+-- Table `polkadot_analysis`.`error_log`
+-- -----------------------------------------------------
+CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`error_log` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `block_id` INT NOT NULL,
+  `error_log` VARCHAR(1500) NOT NULL,
+  PRIMARY KEY (`id`),
+  INDEX `ix_error_log` (`error_log`(255)) VISIBLE,
+  INDEX `ix_block_id` (`block_id` ASC) VISIBLE
+)
+ENGINE = InnoDB
+DEFAULT CHARACTER SET = utf8mb4
+COLLATE = utf8mb4_0900_ai_ci;
+
 USE `polkadot_analysis`;
 
 DELIMITER $$

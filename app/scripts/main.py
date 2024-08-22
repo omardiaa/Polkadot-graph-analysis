@@ -27,7 +27,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import text
 from substrateinterface import SubstrateInterface
 
-from app.models.data import Block, Transaction, Account, Event, ProxyAccount
+from app.models.data import Block, Transaction, Account, Event, ProxyAccount, ErrorLog
 
 DB_NAME = "polkadot_analysis"
 DB_HOST = "localhost"
@@ -94,6 +94,13 @@ def validate_count(block_count):
     except ValueError as ex:
         print(ex)
 
+def create_error_log(block_id, error_log):
+    error_log = ErrorLog(
+        block_id = block_id,
+        error_log = error_log
+    )
+    error_log.save(db_session)
+
 def create_account(address, block, options = {}):
     account_info = substrate.query(module='System', storage_function='Account',
                                    params=[address], block_hash=block.hash)
@@ -113,6 +120,7 @@ def create_account(address, block, options = {}):
             identity_display = identity_value.get('info')['display']['Raw']
             identity_judgement = ','.join(map(str, identity_value['judgements']))
     except Exception:
+        create_error_log(block.id, traceback.format_exc())
         logger.error(traceback.format_exc())
 
     # returns list of validators at that session of the block
@@ -255,8 +263,10 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
                 try:
                     transaction.value = param['value'] / 10 ** token_decimals
                 except TypeError:
+                    create_error_log(block.id, traceback.format_exc())
                     logger.error(traceback.format_exc())  # do nothing
                 except Exception:
+                    create_error_log(block.id, traceback.format_exc())
                     logger.error(traceback.format_exc())
             elif param['type'] == 'LookupSource':
                 # Handle Substrate MultiAddress Format: Id, Index, Address32, Address20 (20 bytes representation)
@@ -278,6 +288,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
                     if substrate.is_valid_ss58_address(transaction.to_address):
                         addresses.append(transaction.to_address)
                 except Exception: # to catch exceptions such as substrate errors (Invalid length for address)
+                    create_error_log(block.id, traceback.format_exc())
                     logger.error(traceback.format_exc())
             elif param['type'] == 'AccountIdLookupOf':
                 transaction.to_address = param['value']
@@ -444,6 +455,8 @@ def process_block(block_number):
     except Exception as e:
         # errors due to new way of handling logs as scale_info, new runtime types
         print(e)  # do nothing
+        create_error_log(block.id, traceback.format_exc())
+
 
     block.logs = logs
 
@@ -656,6 +669,7 @@ if __name__ == '__main__':
                     print("Block Already Added, Skipping Block...")
                 except Exception as err:
                     # clear the db session
+                    create_error_log(block.id, traceback.format_exc())
                     db_session.rollback()
                     logger.error(traceback.format_exc())
 
@@ -670,6 +684,7 @@ if __name__ == '__main__':
         sys.exit(0)
 
     except Exception as err:
+        create_error_log(block.id, traceback.format_exc())
         substrate.close()  # close substrate connection
         db_session.remove()  # close db connection
         logger.error(traceback.format_exc())
