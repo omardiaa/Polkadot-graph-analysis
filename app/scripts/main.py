@@ -10,6 +10,9 @@ Querying Blocks, Events, and Transactions data from the substrate API.
 GNU General Public License Version 3
 """
 
+import multiprocessing
+from functools import partial
+import time
 
 import getopt
 import logging
@@ -97,11 +100,11 @@ def validate_count(block_count):
 def create_error_log(block_id, error_log):
     error_log = ErrorLog(
         block_id = block_id,
-        error_log = error_log
+        error_log = error_log[:1500]
     )
     error_log.save(db_session)
 
-def create_account(address, block, options = {}):
+def create_account(substrate, address, block, options = {}):
     account_info = substrate.query(module='System', storage_function='Account',
                                    params=[address], block_hash=block.hash)
 
@@ -196,7 +199,7 @@ def create_proxy_account(address, proxied_account_address, proxy_type):
         ).update({ProxyAccount.proxy_type: proxy_type})
         print("Updated Account {}, {}...".format(address, proxied_account_address))
 
-def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
+def process_single_txn(substrate, extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
     transaction = Transaction(
         block_id=block.id,
         extrinsic_idx=extrinsic_idx,
@@ -339,7 +342,7 @@ def construct_extrinsic_value(extrinsic, call):
     return new_extrinsic
 
 
-def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status, proxy_status):
+def create_transaction(substrate, extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status, proxy_status):
     if extrinsic.signed:
         block.count_extrinsics_signed += 1
     else:
@@ -347,7 +350,7 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
 
     call_args = extrinsic.value["call"]['call_args']    
     
-    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch, nesting_idx, batch_idx)
+    addresses = process_single_txn(substrate, extrinsic_success, extrinsic_idx, extrinsic, block, batch, nesting_idx, batch_idx)
     #TODO: Update addresses, not the complete list
 
     call_module = extrinsic.value['call']['call_module']
@@ -364,13 +367,13 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                         extrinsic_success = False #For all next extrinsics in the batch as well
                     new_extrinsic = construct_extrinsic_value(extrinsic, batch_call)
                     #extrinsic.value["call"]['call_args']
-                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                    _, new_addresses = create_transaction(substrate, new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
                     addresses.extend(new_addresses)
                     batch_idx += 1
             elif call['name'] == 'call': # Utility.as_declarative: Dispatch a call from a derivative signed origin
                 batch_idx = 1
                 new_extrinsic = construct_extrinsic_value(extrinsic, call['value'])
-                _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                _, new_addresses = create_transaction(substrate, new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
                 addresses.extend(new_addresses)
 
     if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy' and proxy_status):
@@ -382,14 +385,14 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                 internal_call_args = call['value']
                 if type(internal_call_args) is dict:
                     new_extrinsic = construct_extrinsic_value(extrinsic, internal_call_args)
-                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                    _, new_addresses = create_transaction(substrate, new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
                     addresses.extend(new_addresses)
                 else:
                     logger.warning("Nested Extrinsic {} in block {} skipped because of encoded calls".format(call_module, block.id))
 
     return block, addresses
 
-def process_block(block_number):
+def process_block(substrate, block_number):
     if Block.query(db_session).filter_by(id=block_number).count() > 0:
         raise BlockAlreadyAdded(block_number)  # skip if block already exists
 
@@ -542,8 +545,8 @@ def process_block(block_number):
                     delegatee = event.value['attributes']['delegatee']
                     proxy_type = event.value['attributes']['proxy_type']
 
-                    create_account(delegator, block, {'proxied': True})
-                    create_account(delegatee, block, {'is_proxy': True})
+                    create_account(substrate, delegator, block, {'proxied': True})
+                    create_account(substrate, delegatee, block, {'is_proxy': True})
                     create_proxy_account(delegator, delegatee, proxy_type)
                 elif event.value['event_id'] ==  'ProxyRemoved':
                     logger.info("Proxy removed")
@@ -564,7 +567,7 @@ def process_block(block_number):
                         create_multisig_account = True
 
                     if create_multisig_account:
-                        create_account(multisig, block, {'is_multisig': True})
+                        create_account(substrate, multisig, block, {'is_multisig': True})
 
                     extrinsic_idx = event.value['extrinsic_idx']
                     multisig_status_idx[extrinsic_idx] = True
@@ -587,20 +590,35 @@ def process_block(block_number):
             multisig_status = multisig_status_idx.get(extrinsic_idx) or False
             proxy_status = proxy_status_idx.get(extrinsic_idx) or False
 
-            (block, addresses) = create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch,  batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+            (block, addresses) = create_transaction(substrate, extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch,  batch_idx, batch_interrupted_index, multisig_status, proxy_status)
 
             address_list.update(addresses)
         extrinsic_idx += 1
 
     # handle accounts creation/update
     for address in address_list:
-        create_account(address, block)
-    create_account(block.author, block)  # create account for validator/block author
+        create_account(substrate, address, block)
+    create_account(substrate, block.author, block)  # create account for validator/block author
 
     block.save(db_session)
     # commit the db session
     db_session.commit()
 
+def process_blocks_in_parallel(starting_block_id, block_count, url):
+    print("Range from {} to {}".format(starting_block_id, starting_block_id + block_count))
+    with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot') as substrate:
+        logger.info(
+        "Connected to chain {} using {} v {}".format(substrate.chain, substrate.name, substrate.version))
+        for i in range(starting_block_id, starting_block_id + block_count):
+            try:
+                process_block(substrate, i)
+            except BlockAlreadyAdded:
+                print("Block Already Added, Skipping Block...")
+            except Exception as err:
+                # clear the db session
+                create_error_log(i, traceback.format_exc())
+                db_session.rollback()
+                logger.error(traceback.format_exc())
 
 # Main
 if __name__ == '__main__':
@@ -630,6 +648,7 @@ if __name__ == '__main__':
             engine.execute(text('''TRUNCATE TABLE account_history''').execution_options(autocommit=True))
             engine.execute(text('''TRUNCATE TABLE account''').execution_options(autocommit=True))
             engine.execute(text('''TRUNCATE TABLE block''').execution_options(autocommit=True))
+            engine.execute(text('''TRUNCATE TABLE error_log''').execution_options(autocommit=True))
 
         clear = input("Clear Logs?")
         if clear.lower() == 'y':
@@ -637,60 +656,60 @@ if __name__ == '__main__':
 
         first_index = validate_index(input('Enter first block index [default=highest block]: '))
         count = validate_count(input('Enter block count [default=1]: '))
+        processes = validate_count(input('Enter number of processes [default=1]: '))
 
         if not url:
             url = INTERNAL_URL
 
         logger.info("Substrate URL: {}".format(url))
-        with SubstrateInterface(url=url, ss58_format=0, type_registry_preset='polkadot') as substrate:
+    
+        # check the finalized chain head
+        # last_index = substrate.get_block_number(substrate.get_chain_head())
 
-            logger.info(
-                "Connected to chain {} using {} v {}".format(substrate.chain, substrate.name, substrate.version))
+        start = timer()
+        # adding missing blocks (if any)
+        # missing_blocks = Block.get_missing_block_ids(db_session).all()
+        # for missing_block in missing_blocks:
+        #     try:
+        #         for i in range(int(missing_block[0]), missing_block[1]+1):
+        #             process_block(i)
+        #     except BlockAlreadyAdded:
+        #         print("Block Already Added, Skipping Block...")
+        #     except Exception as err:
+        #         # clear the db session
+        #         db_session.rollback()
+        #         logger.error(traceback.format_exc())
 
-            # check the finalized chain head
-            # last_index = substrate.get_block_number(substrate.get_chain_head())
+        block_count = int(count/processes)
+        
+        starting_block_ids = []
+        
+        for i in range(processes):
+            starting_block_ids.append(first_index + i * block_count)
+        
+        process_blocks_partial = partial(process_blocks_in_parallel, block_count=block_count, url=url)
+        pool = multiprocessing.Pool(processes=processes)
+        pool.map(process_blocks_partial, starting_block_ids)
 
-            start = timer()
-            # adding missing blocks (if any)
-            # missing_blocks = Block.get_missing_block_ids(db_session).all()
-            # for missing_block in missing_blocks:
-            #     try:
-            #         for i in range(int(missing_block[0]), missing_block[1]+1):
-            #             process_block(i)
-            #     except BlockAlreadyAdded:
-            #         print("Block Already Added, Skipping Block...")
-            #     except Exception as err:
-            #         # clear the db session
-            #         db_session.rollback()
-            #         logger.error(traceback.format_exc())
+        pool.close()
+        pool.join()
 
-            for i in range(first_index, first_index + count):
-                try:
-                    process_block(i)
-                except BlockAlreadyAdded:
-                    print("Block Already Added, Skipping Block...")
-                except Exception as err:
-                    # clear the db session
-                    create_error_log(block.id, traceback.format_exc())
-                    db_session.rollback()
-                    logger.error(traceback.format_exc())
-
-            logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
+        logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
 
         print("End of Execution....")
 
     except KeyboardInterrupt:
         print('KeyboardInterrupt')
-        substrate.close()  # close substrate connection
+        # substrate.close()  # close substrate connection
         db_session.remove()  # close db connection
         sys.exit(0)
 
     except Exception as err:
-        create_error_log(block.id, traceback.format_exc())
-        substrate.close()  # close substrate connection
+        create_error_log(-1, traceback.format_exc())
+        # substrate.close()  # close substrate connection
         db_session.remove()  # close db connection
         logger.error(traceback.format_exc())
 
     finally:
-        substrate.close()
+        # substrate.close()
         db_session.remove()
