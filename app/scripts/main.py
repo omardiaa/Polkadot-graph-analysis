@@ -680,20 +680,32 @@ if __name__ == '__main__':
         #         db_session.rollback()
         #         logger.error(traceback.format_exc())
 
-        block_count = int(count/processes)
-        
-        starting_block_ids = []
-        
-        for i in range(processes):
-            starting_block_ids.append(first_index + i * block_count)
-        
-        process_blocks_partial = partial(process_blocks_in_parallel, block_count=block_count, url=url)
-        pool = multiprocessing.Pool(processes=processes)
-        pool.map(process_blocks_partial, starting_block_ids)
+        # first_index, count
+        # first_index => 100_000, first_index+100_000 => 200_000, count-
+        # first index => x
+        # if remaining_count < max_batch_size, process the rest
+        remaining_count = count
+        max_batch_size = 100_000
 
-        pool.close()
-        pool.join()
+        while remaining_count > 0:
+            current_batch_size = min(remaining_count, max_batch_size)
+            remaining_count -= current_batch_size
 
+            block_count = int(current_batch_size / processes)
+            
+            starting_block_ids = []
+            
+            for i in range(processes):
+                starting_block_ids.append(first_index + i * block_count)
+            
+            process_blocks_partial = partial(process_blocks_in_parallel, block_count=block_count, url=url)
+            pool = multiprocessing.Pool(processes=processes)
+            pool.map(process_blocks_partial, starting_block_ids)
+
+            pool.close()
+            pool.join()
+            
+            first_index += current_batch_size
         logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
 
         print("End of Execution....")
