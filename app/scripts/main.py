@@ -157,7 +157,7 @@ def create_account(address, block, options = {}):
         account.save(db_session)
 
     else:
-        print("Previous Records for account {} exists in DB".format(address))
+        # print("Previous Records for account {} exists in DB".format(address))
         is_proxy = is_proxy or account.is_proxy
         proxied = proxied or account.proxied
         is_multisig = is_multisig or account.is_multisig
@@ -175,7 +175,7 @@ def create_account(address, block, options = {}):
                   Account.proxied: proxied,
                   Account.is_multisig: is_multisig},
                  synchronize_session='fetch')
-        print("Updated Account {}...".format(address))
+        # print("Updated Account {}...".format(address))
 
 def create_proxy_account(address, proxied_account_address, proxy_type):
     account = ProxyAccount.query(db_session).filter_by(
@@ -190,11 +190,11 @@ def create_proxy_account(address, proxied_account_address, proxy_type):
         account.save(db_session)
 
     else:
-        print("Previous Records for account {} exists in DB".format(address))
+        # print("Previous Records for account {} exists in DB".format(address))
         ProxyAccount.query(db_session).filter_by(
             address=address, proxied_account_address=proxied_account_address
         ).update({ProxyAccount.proxy_type: proxy_type})
-        print("Updated Account {}, {}...".format(address, proxied_account_address))
+        # print("Updated Account {}, {}...".format(address, proxied_account_address))
 
 def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
     transaction = Transaction(
@@ -313,13 +313,13 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         # some of these transfer_all do not have an event available, this is because the transaction had either failed
         # or the sender is including his own address as the destination !!!
 
-        if transaction.value is not None and \
-                transaction.value > 0 and transaction.to_address is not None:
-            logger.info(">>{} {} from {} -> {}: Value {}".format(
-                transaction.module_id, transaction.call_id,
-                transaction.from_address, transaction.to_address,
-                '{} {}'.format(transaction.value, substrate.token_symbol)
-            ))
+        # if transaction.value is not None and \
+        #         transaction.value > 0 and transaction.to_address is not None:
+        #     logger.info(">>{} {} from {} -> {}: Value {}".format(
+        #         transaction.module_id, transaction.call_id,
+        #         transaction.from_address, transaction.to_address,
+        #         '{} {}'.format(transaction.value, substrate.token_symbol)
+        #     ))
 
     # unsigned
     else:
@@ -327,7 +327,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
             if param['name'] == 'now':
                 block.timestamp = param['value']
                 block.datetime = datetime.fromtimestamp(block.timestamp / 1e3)
-                logger.info(">> Datetime: " + block.datetime.strftime("%d/%m/%Y, %H:%M:%S"))
+                # logger.info(">> Datetime: " + block.datetime.strftime("%d/%m/%Y, %H:%M:%S"))
 
     transaction.save(db_session)
     return addresses
@@ -353,7 +353,7 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
     call_module = extrinsic.value['call']['call_module']
 
     if call_module == 'Utility':
-        logger.info("Utility Extrinsic {}...".format(extrinsic.value["call"]["call_function"]))
+        # logger.info("Utility Extrinsic {}...".format(extrinsic.value["call"]["call_function"]))
         # handling batch transactions
         for call in call_args:
             if 'Vec<Call>' in call['type'] or call['name'] == 'calls':
@@ -375,7 +375,7 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
 
     if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy' and proxy_status):
         #TODO: Handle if proxy failed, proxy_status
-        logger.info("{} Extrinsic {}...".format(call_module, extrinsic.value["call"]["call_function"]))
+        # logger.info("{} Extrinsic {}...".format(call_module, extrinsic.value["call"]["call_function"]))
 
         for call in call_args:
             if call['name'] == 'call':
@@ -395,7 +395,7 @@ def process_block(block_number):
 
     block = substrate.get_block(block_number=block_number, include_author=True)
     block_hash = block['header']['hash']
-    logger.info(">>> Processing block {} hash '{}' author: {}".format(block_number, block_hash, block['author']))
+    # logger.info(">>> Processing block {} hash '{}' author: {}".format(block_number, block_hash, block['author']))
 
     block_id = block['header']['number']
     digest_logs = block['header'].get('digest', {}).pop('logs', None)
@@ -519,7 +519,7 @@ def process_block(block_number):
                         address=addr
                     ).update({Account.is_reaped: True}, synchronize_session='fetch')
                     block.count_accounts_reaped += 1
-                    logger.info("Updated Killed Account {}...".format(addr))
+                    # logger.info("Updated Killed Account {}...".format(addr))
 
             if event.value['module_id'] == 'Utility':
                 if event.value['event_id'] ==  'BatchInterrupted':
@@ -675,7 +675,7 @@ if __name__ == '__main__':
                     db_session.rollback()
                     logger.error(traceback.format_exc())
 
-            logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
+            # logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
 
         print("End of Execution....")
 
