@@ -686,7 +686,7 @@ if __name__ == '__main__':
         sys.exit(0)
 
     except Exception as err:
-        create_error_log(block.id, traceback.format_exc())
+        create_error_log(-1, traceback.format_exc())
         substrate.close()  # close substrate connection
         db_session.remove()  # close db connection
         logger.error(traceback.format_exc())
