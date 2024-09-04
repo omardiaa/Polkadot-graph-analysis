@@ -333,7 +333,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
     return addresses
 
 def construct_extrinsic_value(extrinsic, call):
-    new_extrinsic = copy.deepcopy(extrinsic)
+    new_extrinsic = copy.copy(extrinsic)
     new_extrinsic.value["extrinsic_length"] = 0 # Total length is in the original extrinsic
     new_extrinsic.value["call"] = call
     return new_extrinsic
