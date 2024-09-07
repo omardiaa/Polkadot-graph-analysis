@@ -671,7 +671,7 @@ if __name__ == '__main__':
                     print("Block Already Added, Skipping Block...")
                 except Exception as err:
                     # clear the db session
-                    create_error_log(block.id, traceback.format_exc())
+                    create_error_log(i, traceback.format_exc())
                     db_session.rollback()
                     logger.error(traceback.format_exc())
 
