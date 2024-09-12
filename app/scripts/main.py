@@ -97,7 +97,7 @@ def validate_count(block_count):
 def create_error_log(block_id, error_log):
     error_log = ErrorLog(
         block_id = block_id,
-        error_log = error_log
+        error_log = error_log[:1500]
     )
     error_log.save(db_session)
     db_session.commit()
