@@ -539,9 +539,14 @@ def process_block(block_number):
 
             if event.value['module_id'] == 'Proxy':
                 if event.value['event_id'] ==  'ProxyAdded':
-                    delegator = event.value['attributes']['delegator']
-                    delegatee = event.value['attributes']['delegatee']
-                    proxy_type = event.value['attributes']['proxy_type']
+                    if 'delegator' in event.value['attributes']:
+                        delegator = event.value['attributes']['delegator']
+                        delegatee = event.value['attributes']['delegatee']
+                        proxy_type = event.value['attributes']['proxy_type']        
+                    else:
+                        delegator = event.value['attributes'][0]
+                        delegatee = event.value['attributes'][1]
+                        proxy_type = event.value['attributes'][2]       
 
                     create_account(delegator, block, {'proxied': True})
                     create_account(delegatee, block, {'is_proxy': True})
