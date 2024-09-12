@@ -100,6 +100,7 @@ def create_error_log(block_id, error_log):
         error_log = error_log
     )
     error_log.save(db_session)
+    db_session.commit()
 
 def create_account(address, block, options = {}):
     account_info = substrate.query(module='System', storage_function='Account',
@@ -671,8 +672,8 @@ if __name__ == '__main__':
                     print("Block Already Added, Skipping Block...")
                 except Exception as err:
                     # clear the db session
-                    create_error_log(i, traceback.format_exc())
                     db_session.rollback()
+                    create_error_log(i, traceback.format_exc())
                     logger.error(traceback.format_exc())
 
             # logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
