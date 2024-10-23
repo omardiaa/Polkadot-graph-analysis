@@ -271,7 +271,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
                 except Exception:
                     create_error_log(block.id, traceback.format_exc())
                     logger.error(traceback.format_exc())
-            elif param['type'] == 'LookupSource':
+            elif param['type'] == 'LookupSource' or param['type'] == 'AccountIdLookupOf':
                 # Handle Substrate MultiAddress Format: Id, Index, Address32, Address20 (20 bytes representation)
                 # https://docs.substrate.io/rustdocs/latest/sp_runtime/enum.MultiAddress.html
                 # starting from block #4001911
@@ -293,10 +293,6 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
                 except Exception: # to catch exceptions such as substrate errors (Invalid length for address)
                     create_error_log(block.id, traceback.format_exc())
                     logger.error(traceback.format_exc())
-            elif param['type'] == 'AccountIdLookupOf':
-                transaction.to_address = param['value']
-                if substrate.is_valid_ss58_address(transaction.to_address):
-                    addresses.append(transaction.to_address)
 
         if 'address' in extrinsic:
             transaction.from_address = extrinsic.value['address'].replace('0x', '')
