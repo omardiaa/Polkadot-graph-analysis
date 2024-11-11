@@ -376,14 +376,24 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
 
         for call in call_args:
             if call['name'] == 'call':
+                constructed_extrinsic = False
                 internal_call_args = call['value']
+
                 if type(internal_call_args) is dict:
                     new_extrinsic = construct_extrinsic_value(extrinsic, internal_call_args)
+                    constructed_extrinsic = True
+                elif type(internal_call_args) is str:
+                    opaque_call = ScaleBytes(internal_call_args)
+                    call_obj = substrate.decode_scale( type_string='Call', scale_bytes=opaque_call, return_scale_obj=True, block_hash=block.hash)
+                    new_extrinsic = construct_extrinsic_value(extrinsic, call_obj.value)
+                    constructed_extrinsic = True
+                    logger.info("Nested Extrinsic {} in block {} with encoded calls".format(call_module, block.id))
+                else:
+                    logger.warning("Nested Extrinsic {} in block {} skipped".format(call_module, block.id))
+
+                if constructed_extrinsic:
                     _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
                     addresses.extend(new_addresses)
-                else:
-                    logger.warning("Nested Extrinsic {} in block {} skipped because of encoded calls".format(call_module, block.id))
-
     return block, addresses
 
 def process_block(block_number):
