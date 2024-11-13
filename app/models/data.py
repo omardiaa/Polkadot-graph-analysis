@@ -72,6 +72,7 @@ class Transaction(BaseModel):
                         default=0)  # Added to handle nested transactions like Utiltiy, Proxy, Multisig
     batch_idx = sa.Column(sa.Integer(), primary_key=True, index=True,
                           default=0)  # Added to handle Utility Batch extrinsics
+    unique_sequence = sa.Column(sa.Integer(), primary_key=True, index=True, default=0)
     extrinsic_length = sa.Column(sa.String(10))
     extrinsic_hash = sa.Column(sa.String(66), nullable=True)
     signed = sa.Column(sa.SmallInteger(), nullable=False)

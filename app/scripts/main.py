@@ -203,6 +203,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         extrinsic_idx=extrinsic_idx,
         nesting_idx=nesting_idx,
         batch_idx=batch_idx,
+        unique_sequence=0,
         extrinsic_length=extrinsic.value['extrinsic_length'],
         extrinsic_hash=extrinsic.value['extrinsic_hash'],
         signed=extrinsic.signed,
@@ -325,6 +326,18 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
                 block.timestamp = param['value']
                 block.datetime = datetime.fromtimestamp(block.timestamp / 1e3)
                 # logger.info(">> Datetime: " + block.datetime.strftime("%d/%m/%Y, %H:%M:%S"))
+
+    max_unique_sequence = Transaction.query(db_session).filter_by(
+        block_id=block.id,
+        extrinsic_idx=extrinsic_idx,
+        nesting_idx=nesting_idx,
+        batch_idx=batch_idx
+    ).order_by(Transaction.unique_sequence.desc()).first()
+    
+    if max_unique_sequence:
+        transaction.unique_sequence = max_unique_sequence.unique_sequence + 1
+    else:
+        transaction.unique_sequence = 0
 
     transaction.save(db_session)
     return addresses
