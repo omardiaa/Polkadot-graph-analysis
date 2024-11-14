@@ -647,18 +647,18 @@ if __name__ == '__main__':
             elif opt in ("-u", "--url"):
                 url = arg
 
-        clear = input("Clear DB?")
+        # clear = input("Clear DB?")
 
-        if clear.lower() == 'y':
-            engine.execute(text('''TRUNCATE TABLE event''').execution_options(autocommit=True))
-            engine.execute(text('''TRUNCATE TABLE extrinsic''').execution_options(autocommit=True))
-            engine.execute(text('''TRUNCATE TABLE account_history''').execution_options(autocommit=True))
-            engine.execute(text('''TRUNCATE TABLE account''').execution_options(autocommit=True))
-            engine.execute(text('''TRUNCATE TABLE block''').execution_options(autocommit=True))
+        # if clear.lower() == 'y':
+        #     engine.execute(text('''TRUNCATE TABLE event''').execution_options(autocommit=True))
+        #     engine.execute(text('''TRUNCATE TABLE extrinsic''').execution_options(autocommit=True))
+        #     engine.execute(text('''TRUNCATE TABLE account_history''').execution_options(autocommit=True))
+        #     engine.execute(text('''TRUNCATE TABLE account''').execution_options(autocommit=True))
+        #     engine.execute(text('''TRUNCATE TABLE block''').execution_options(autocommit=True))
 
-        clear = input("Clear Logs?")
-        if clear.lower() == 'y':
-            open('polkadot_analysis.log', 'w').close()
+        # clear = input("Clear Logs?")
+        # if clear.lower() == 'y':
+        #     open('polkadot_analysis.log', 'w').close()
 
         first_index = validate_index(input('Enter first block index [default=highest block]: '))
         count = validate_count(input('Enter block count [default=1]: '))
