@@ -229,6 +229,33 @@ ENGINE = InnoDB
 DEFAULT CHARACTER SET = utf8mb4
 COLLATE = utf8mb4_0900_ai_ci;
 
+-- -----------------------------------------------------
+-- Table `polkadot_analysis`.`multisig_account`
+-- -----------------------------------------------------
+CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`multisig_account` (
+  `address` VARCHAR(255) NOT NULL,
+  `threshold` INT NOT NULL,
+  PRIMARY KEY (`address`)
+)
+ENGINE = InnoDB
+DEFAULT CHARACTER SET = utf8mb4
+COLLATE = utf8mb4_0900_ai_ci;
+
+-- -----------------------------------------------------
+-- Table `polkadot_analysis`.`multisig_member_account`
+-- -----------------------------------------------------
+CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`multisig_member_account` (
+  `address` VARCHAR(255) NOT NULL,
+  `multisig_account_address` VARCHAR(255) NOT NULL,
+  PRIMARY KEY (`address`, `multisig_account_address`),
+  FOREIGN KEY (`multisig_account_address`) REFERENCES `multisig_account`(`address`)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+)
+ENGINE = InnoDB
+DEFAULT CHARACTER SET = utf8mb4
+COLLATE = utf8mb4_0900_ai_ci;
+
 USE `polkadot_analysis`;
 
 DELIMITER $$

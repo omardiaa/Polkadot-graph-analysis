@@ -193,3 +193,14 @@ class ErrorLog(BaseModel):
     id = sa.Column(sa.Integer(), primary_key=True, autoincrement=True)
     block_id = sa.Column(sa.Integer(), index=True)
     error_log = sa.Column(sa.String(1500), index=True)
+
+class MultisigAccount(BaseModel):
+    __tablename__ = 'multisig_account'
+
+    address = sa.Column(sa.String(255), primary_key=True)
+    threshold = sa.Column(sa.Integer())
+class MultisigMemberAccount(BaseModel):
+    __tablename__ = 'multisig_member_account'
+
+    address = sa.Column(sa.String(255), primary_key=True)
+    multisig_account_address = sa.Column(sa.String(255), primary_key=True)

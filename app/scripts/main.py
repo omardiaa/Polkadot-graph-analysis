@@ -27,7 +27,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import text
 from substrateinterface import SubstrateInterface
 
-from app.models.data import Block, Transaction, Account, Event, ProxyAccount, ErrorLog
+from app.models.data import Block, Transaction, Account, Event, ProxyAccount, ErrorLog, MultisigAccount, MultisigMemberAccount
 
 DB_NAME = "polkadot_analysis"
 DB_HOST = "localhost"
@@ -197,6 +197,31 @@ def create_proxy_account(address, proxied_account_address, proxy_type):
         ).update({ProxyAccount.proxy_type: proxy_type})
         # print("Updated Account {}, {}...".format(address, proxied_account_address))
 
+def create_multisig_accounts(multisig_signatories, threshold):
+    multi_address = substrate.generate_multisig_account(
+        signatories=multisig_signatories,
+        threshold=threshold
+    )
+    multi_address = str(multi_address)
+    # if multi_address not exist in db:
+    multi_address_exists = MultisigAccount.query(db_session).filter_by(address=multi_address).count() > 0
+    if multi_address_exists:
+        print("Address {} already exists in Multisig table".format(multi_address))
+        return
+    
+    multisig_account = MultisigAccount(
+        address=multi_address,
+        threshold=threshold
+    )
+    multisig_account.save(db_session)
+    for address in multisig_signatories:
+        multisig_member_account = MultisigMemberAccount(
+            address=address,
+            multisig_account_address=multi_address
+        )
+        multisig_member_account.save(db_session)
+
+        
 def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
     transaction = Transaction(
         block_id=block.id,
@@ -361,6 +386,7 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
     #TODO: Update addresses, not the complete list
 
     call_module = extrinsic.value['call']['call_module']
+    call_function = extrinsic.value['call']['call_function']
 
     if call_module == 'Utility':
         # logger.info("Utility Extrinsic {}...".format(extrinsic.value["call"]["call_function"]))
@@ -407,6 +433,12 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                 if constructed_extrinsic:
                     _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
                     addresses.extend(new_addresses)
+    if (call_module == 'Multisig' and call_function == 'as_multi'):
+        threshold = call_args[0]['value']
+        other_signatories = call_args[1]['value']
+        other_signatories.append(extrinsic.value['address'].replace('0x', ''))
+        create_multisig_accounts(other_signatories, threshold)
+
     return block, addresses
 
 def process_block(block_number):
