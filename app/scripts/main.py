@@ -28,6 +28,7 @@ from sqlalchemy.sql import text
 from substrateinterface import SubstrateInterface
 
 from app.models.data import Block, Transaction, Account, Event, ProxyAccount, ErrorLog, MultisigAccount, MultisigMemberAccount
+import csv
 
 DB_NAME = "polkadot_analysis"
 DB_HOST = "localhost"
@@ -207,7 +208,7 @@ def create_multisig_accounts(multisig_signatories, threshold):
     multi_address_exists = MultisigAccount.query(db_session).filter_by(address=multi_address).count() > 0
     if multi_address_exists:
         print("Address {} already exists in Multisig table".format(multi_address))
-        return
+        return multi_address
     
     multisig_account = MultisigAccount(
         address=multi_address,
@@ -221,6 +222,7 @@ def create_multisig_accounts(multisig_signatories, threshold):
         )
         multisig_member_account.save(db_session)
 
+    return multi_address
         
 def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
     transaction = Transaction(
@@ -367,10 +369,12 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
     transaction.save(db_session)
     return addresses
 
-def construct_extrinsic_value(extrinsic, call):
+def construct_extrinsic_value(extrinsic, call, from_address=None):
     new_extrinsic = copy.copy(extrinsic)
     new_extrinsic.value["extrinsic_length"] = 0 # Total length is in the original extrinsic
     new_extrinsic.value["call"] = call
+    if from_address:
+        new_extrinsic.value["address"] = from_address
     return new_extrinsic
 
 
@@ -413,18 +417,29 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
         #TODO: Handle if proxy failed, proxy_status
         # logger.info("{} Extrinsic {}...".format(call_module, extrinsic.value["call"]["call_function"]))
 
+        #TODO: update new_extrinsic from_address if multisig to be the multisig account address
+        
+        from_address = extrinsic.value['address']
+        
+        if (call_module == 'Multisig' and call_function == 'as_multi'):
+            threshold = call_args[0]['value']
+            other_signatories = call_args[1]['value']
+            other_signatories.append(extrinsic.value['address'].replace('0x', ''))
+            from_address = create_multisig_accounts(other_signatories, threshold)
+            # This will recursively have impact on all the nested extrinsics
+
         for call in call_args:
             if call['name'] == 'call':
                 constructed_extrinsic = False
                 internal_call_args = call['value']
 
                 if type(internal_call_args) is dict:
-                    new_extrinsic = construct_extrinsic_value(extrinsic, internal_call_args)
+                    new_extrinsic = construct_extrinsic_value(extrinsic, internal_call_args, from_address)
                     constructed_extrinsic = True
                 elif type(internal_call_args) is str:
                     opaque_call = ScaleBytes(internal_call_args)
                     call_obj = substrate.decode_scale( type_string='Call', scale_bytes=opaque_call, return_scale_obj=True, block_hash=block.hash)
-                    new_extrinsic = construct_extrinsic_value(extrinsic, call_obj.value)
+                    new_extrinsic = construct_extrinsic_value(extrinsic, call_obj.value, from_address)
                     constructed_extrinsic = True
                     logger.info("Nested Extrinsic {} in block {} with encoded calls".format(call_module, block.id))
                 else:
@@ -433,11 +448,6 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                 if constructed_extrinsic:
                     _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
                     addresses.extend(new_addresses)
-    if (call_module == 'Multisig' and call_function == 'as_multi'):
-        threshold = call_args[0]['value']
-        other_signatories = call_args[1]['value']
-        other_signatories.append(extrinsic.value['address'].replace('0x', ''))
-        create_multisig_accounts(other_signatories, threshold)
 
     return block, addresses
 
@@ -601,7 +611,7 @@ def process_block(block_number):
 
                     create_account(delegator, block, {'proxied': True})
                     create_account(delegatee, block, {'is_proxy': True})
-                    create_proxy_account(delegator, delegatee, proxy_type)
+                    create_proxy_account(delegator, delegatee, proxy_type) # TODO: change to (delegatee, delegator, proxy_type)
                 elif event.value['event_id'] ==  'ProxyRemoved':
                     logger.info("Proxy removed")
                     #TODO: remove proxy account, remove account record
@@ -692,8 +702,8 @@ if __name__ == '__main__':
         # if clear.lower() == 'y':
         #     open('polkadot_analysis.log', 'w').close()
 
-        first_index = validate_index(input('Enter first block index [default=highest block]: '))
-        count = validate_count(input('Enter block count [default=1]: '))
+        # first_index = validate_index(input('Enter first block index [default=highest block]: '))
+        # count = validate_count(input('Enter block count [default=1]: '))
 
         if not url:
             url = INTERNAL_URL
@@ -721,16 +731,40 @@ if __name__ == '__main__':
             #         db_session.rollback()
             #         logger.error(traceback.format_exc())
 
-            for i in range(first_index, first_index + count):
+            block_ids = []
+            file_path = './multisig_processing_script/update_multisig_blocks_with_wrong_from_address/as_multi_block_ids_2.csv'
+            with open(file_path, mode='r') as file:
+                csv_reader = csv.reader(file)
+                block_ids = [int(row[0]) for row in csv_reader]
+
+            for block_id in block_ids:
                 try:
-                    process_block(i)
+                    # Remove the block before processing it
+                    Block.query(db_session).filter_by(id=block_id).delete()
+                    Transaction.query(db_session).filter_by(block_id=block_id).delete()
+                    Event.query(db_session).filter_by(block_id=block_id).delete()
+                    db_session.commit()
+                    
+                    process_block(block_id)
+                    print("Block {} processed successfully".format(block_id))
                 except BlockAlreadyAdded:
                     print("Block Already Added, Skipping Block...")
                 except Exception as err:
                     # clear the db session
                     db_session.rollback()
-                    create_error_log(i, traceback.format_exc())
+                    create_error_log(block_id, traceback.format_exc())
                     logger.error(traceback.format_exc())
+            
+            # for i in range(first_index, first_index + count):
+            #     try:
+            #         process_block(i)
+            #     except BlockAlreadyAdded:
+            #         print("Block Already Added, Skipping Block...")
+            #     except Exception as err:
+            #         # clear the db session
+            #         db_session.rollback()
+            #         create_error_log(i, traceback.format_exc())
+            #         logger.error(traceback.format_exc())
 
             # logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
 
