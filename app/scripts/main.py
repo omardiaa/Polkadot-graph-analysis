@@ -27,7 +27,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import text
 from substrateinterface import SubstrateInterface
 
-from app.models.data import Block, Transaction, Account, Event, ProxyAccount, ErrorLog, MultisigAccount, MultisigMemberAccount
+from app.models.data import Block, Transaction, Account, Event, ProxyAccount, ErrorLog, MultisigAccount, MultisigMemberAccount, ProxyExtrinsicRealAddress
 import csv
 
 DB_NAME = "polkadot_analysis"
@@ -242,6 +242,24 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         datetime=block.datetime,
         timestamp=block.timestamp
     )
+    
+    # Update ProxyExtrinsicRealAddress if the extrinsic is a proxy extrinsic
+    real_address = None
+    proxy_extrinsic_real_address = None
+    if (extrinsic.value['call']['call_module'] == 'Proxy'
+            and (extrinsic.value["call"]["call_function"] == 'proxy'
+                 or extrinsic.value["call"]["call_function"] == 'proxy_announced')
+            ):
+        real_address = next((obj["value"]["id"] if isinstance(obj["value"], dict) else obj["value"] for obj in extrinsic.value['call']['call_args'] if obj["name"] == "real"), None)
+
+    if real_address:
+        proxy_extrinsic_real_address = ProxyExtrinsicRealAddress(
+            block_id=block.id,
+            extrinsic_idx=extrinsic_idx,
+            nesting_idx=nesting_idx,
+            batch_idx=batch_idx,
+            real_address=real_address
+        )
 
     call_args = extrinsic.value['call']['call_args']
 
@@ -367,6 +385,8 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         transaction.unique_sequence = 0
 
     transaction.save(db_session)
+    if proxy_extrinsic_real_address:
+        proxy_extrinsic_real_address.save(db_session)
     return addresses
 
 def construct_extrinsic_value(extrinsic, call, from_address=None):
@@ -732,19 +752,19 @@ if __name__ == '__main__':
             #         logger.error(traceback.format_exc())
 
             block_ids = []
-            file_path = './multisig_processing_script/update_multisig_blocks_with_wrong_from_address/as_multi_block_ids_2.csv'
+            file_path = './migrations/migration_3_add_proxy_real_addresses/proxy_extrinsics.csv'
             with open(file_path, mode='r') as file:
                 csv_reader = csv.reader(file)
                 block_ids = [int(row[0]) for row in csv_reader]
 
+            Block.query(db_session).filter(Block.id.in_(block_ids)).delete()
+            Transaction.query(db_session).filter(Transaction.block_id.in_(block_ids)).delete()
+            Event.query(db_session).filter(Event.block_id.in_(block_ids)).delete()
+            db_session.commit()
+            
+            print("Done deleting blocks...")
             for block_id in block_ids:
                 try:
-                    # Remove the block before processing it
-                    Block.query(db_session).filter_by(id=block_id).delete()
-                    Transaction.query(db_session).filter_by(block_id=block_id).delete()
-                    Event.query(db_session).filter_by(block_id=block_id).delete()
-                    db_session.commit()
-                    
                     process_block(block_id)
                     print("Block {} processed successfully".format(block_id))
                 except BlockAlreadyAdded:

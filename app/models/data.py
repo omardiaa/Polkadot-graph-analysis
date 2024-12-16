@@ -204,3 +204,12 @@ class MultisigMemberAccount(BaseModel):
 
     address = sa.Column(sa.String(255), primary_key=True)
     multisig_account_address = sa.Column(sa.String(255), primary_key=True)
+    
+class ProxyExtrinsicRealAddress(BaseModel):
+    __tablename__ = 'proxy_extrinsic_real_address'
+
+    block_id = sa.Column(sa.Integer(), primary_key=True, index=True)
+    extrinsic_idx = sa.Column(sa.Integer(), primary_key=True, index=True)
+    nesting_idx = sa.Column(sa.Integer(), primary_key=True, index=True, default=0)
+    batch_idx = sa.Column(sa.Integer(), primary_key=True, index=True, default=0)
+    real_address = sa.Column(sa.String(64), nullable=False, index=True)
