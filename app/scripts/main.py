@@ -757,16 +757,18 @@ if __name__ == '__main__':
                 csv_reader = csv.reader(file)
                 block_ids = [int(row[0]) for row in csv_reader]
 
-            Block.query(db_session).filter(Block.id.in_(block_ids)).delete()
-            Transaction.query(db_session).filter(Transaction.block_id.in_(block_ids)).delete()
-            Event.query(db_session).filter(Event.block_id.in_(block_ids)).delete()
-            db_session.commit()
-            
-            print("Done deleting blocks...")
+            count = 0
             for block_id in block_ids:
                 try:
+                    Block.query(db_session).filter_by(id=block_id).delete()
+                    Transaction.query(db_session).filter_by(block_id=block_id).delete()
+                    Event.query(db_session).filter_by(block_id=block_id).delete()
+                    db_session.commit()
+
                     process_block(block_id)
                     print("Block {} processed successfully".format(block_id))
+                    print("Finished {} blocks out of {} with percentage {}".format(count, len(block_ids), (count/len(block_ids))*100))
+                    count = count + 1
                 except BlockAlreadyAdded:
                     print("Block Already Added, Skipping Block...")
                 except Exception as err:
