@@ -252,15 +252,6 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
             ):
         real_address = next((obj["value"]["id"] if isinstance(obj["value"], dict) else obj["value"] for obj in extrinsic.value['call']['call_args'] if obj["name"] == "real"), None)
 
-    if real_address:
-        proxy_extrinsic_real_address = ProxyExtrinsicRealAddress(
-            block_id=block.id,
-            extrinsic_idx=extrinsic_idx,
-            nesting_idx=nesting_idx,
-            batch_idx=batch_idx,
-            real_address=real_address
-        )
-
     call_args = extrinsic.value['call']['call_args']
 
     addresses = []
@@ -385,7 +376,15 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         transaction.unique_sequence = 0
 
     transaction.save(db_session)
-    if proxy_extrinsic_real_address:
+    if real_address:
+        proxy_extrinsic_real_address = ProxyExtrinsicRealAddress(
+            block_id=block.id,
+            extrinsic_idx=extrinsic_idx,
+            nesting_idx=nesting_idx,
+            batch_idx=batch_idx,
+            unique_sequence=transaction.unique_sequence,
+            real_address=real_address
+        )
         proxy_extrinsic_real_address.save(db_session)
     return addresses
 

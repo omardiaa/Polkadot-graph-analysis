@@ -212,4 +212,5 @@ class ProxyExtrinsicRealAddress(BaseModel):
     extrinsic_idx = sa.Column(sa.Integer(), primary_key=True, index=True)
     nesting_idx = sa.Column(sa.Integer(), primary_key=True, index=True, default=0)
     batch_idx = sa.Column(sa.Integer(), primary_key=True, index=True, default=0)
+    unique_sequence = sa.Column(sa.Integer(), primary_key=True, index=True, default=0)
     real_address = sa.Column(sa.String(64), nullable=False, index=True)

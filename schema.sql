@@ -261,10 +261,11 @@ CREATE TABLE IF NOT EXISTS `polkadot_analysis`.`proxy_extrinsic_real_address` (
     `extrinsic_idx` INT NOT NULL,
     `nesting_idx` INT NOT NULL DEFAULT 0,
     `batch_idx` INT NOT NULL DEFAULT 0,
+    `unique_sequence` INT NOT NULL DEFAULT 0,
     `real_address` VARCHAR(64) NOT NULL,
-    PRIMARY KEY (`block_id`, `extrinsic_idx`, `nesting_idx`, `batch_idx`),
-    FOREIGN KEY (`block_id`, `extrinsic_idx`, `nesting_idx`, `batch_idx`)
-    REFERENCES `extrinsic`(`block_id`, `extrinsic_idx`, `nesting_idx`, `batch_idx`)
+    PRIMARY KEY (`block_id`, `extrinsic_idx`, `nesting_idx`, `batch_idx`, `unique_sequence`),
+    FOREIGN KEY (`block_id`, `extrinsic_idx`, `nesting_idx`, `batch_idx`, `unique_sequence`)
+    REFERENCES `extrinsic`(`block_id`, `extrinsic_idx`, `nesting_idx`, `batch_idx`, `unique_sequence`)
     ON DELETE CASCADE
     ON UPDATE CASCADE
 )
