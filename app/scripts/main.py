@@ -224,7 +224,7 @@ def create_multisig_accounts(multisig_signatories, threshold):
 
     return multi_address
         
-def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0):
+def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch=False, nesting_idx=0, batch_idx=0, real_address=None):
     transaction = Transaction(
         block_id=block.id,
         extrinsic_idx=extrinsic_idx,
@@ -243,15 +243,6 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         timestamp=block.timestamp
     )
     
-    # Update ProxyExtrinsicRealAddress if the extrinsic is a proxy extrinsic
-    real_address = None
-    proxy_extrinsic_real_address = None
-    if (extrinsic.value['call']['call_module'] == 'Proxy'
-            and (extrinsic.value["call"]["call_function"] == 'proxy'
-                 or extrinsic.value["call"]["call_function"] == 'proxy_announced')
-            ):
-        real_address = next((obj["value"]["id"] if isinstance(obj["value"], dict) else obj["value"] for obj in extrinsic.value['call']['call_args'] if obj["name"] == "real"), None)
-
     call_args = extrinsic.value['call']['call_args']
 
     addresses = []
@@ -397,7 +388,8 @@ def construct_extrinsic_value(extrinsic, call, from_address=None):
     return new_extrinsic
 
 
-def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status, proxy_status):
+def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx, batch, batch_idx, batch_interrupted_index, multisig_status, proxy_status, real_address=None):
+    # TODO: Pass parameters as one object (attributes) to enhance readability
     if extrinsic.signed:
         block.count_extrinsics_signed += 1
     else:
@@ -405,7 +397,14 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
 
     call_args = extrinsic.value["call"]['call_args']    
     
-    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch, nesting_idx, batch_idx)
+    # Update ProxyExtrinsicRealAddress if the extrinsic is a proxy extrinsic
+    if (extrinsic.value['call']['call_module'] == 'Proxy'
+            and (extrinsic.value["call"]["call_function"] == 'proxy'
+                 or extrinsic.value["call"]["call_function"] == 'proxy_announced')
+            ):
+        real_address = next((obj["value"]["id"] if isinstance(obj["value"], dict) else obj["value"] for obj in extrinsic.value['call']['call_args'] if obj["name"] == "real"), None)
+
+    addresses = process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch, nesting_idx, batch_idx, real_address)
     #TODO: Update addresses, not the complete list
 
     call_module = extrinsic.value['call']['call_module']
@@ -423,13 +422,13 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                         extrinsic_success = False #For all next extrinsics in the batch as well
                     new_extrinsic = construct_extrinsic_value(extrinsic, batch_call)
                     #extrinsic.value["call"]['call_args']
-                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status, real_address)
                     addresses.extend(new_addresses)
                     batch_idx += 1
             elif call['name'] == 'call': # Utility.as_declarative: Dispatch a call from a derivative signed origin
                 batch_idx = 1
                 new_extrinsic = construct_extrinsic_value(extrinsic, call['value'])
-                _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, True, batch_idx, batch_interrupted_index, multisig_status, proxy_status, real_address)
                 addresses.extend(new_addresses)
 
     if (call_module == 'Multisig' and multisig_status) or (call_module == 'Proxy' and proxy_status):
@@ -465,7 +464,7 @@ def create_transaction(extrinsic, block, extrinsic_success, extrinsic_idx, nesti
                     logger.warning("Nested Extrinsic {} in block {} skipped".format(call_module, block.id))
 
                 if constructed_extrinsic:
-                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status)
+                    _, new_addresses = create_transaction(new_extrinsic, block, extrinsic_success, extrinsic_idx, nesting_idx + 1, False, batch_idx, batch_interrupted_index, multisig_status, proxy_status, real_address)
                     addresses.extend(new_addresses)
 
     return block, addresses
