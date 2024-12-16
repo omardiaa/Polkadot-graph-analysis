@@ -181,3 +181,19 @@ class Event(BaseModel):
 
     def serialize_id(self):
         return '{}-{}'.format(self.block_id, self.event_idx)
+
+class ProxyAccount(BaseModel):
+    __tablename__ = 'proxy_account'
+
+    address = sa.Column(sa.String(64), primary_key=True)
+    proxied_account_address = sa.Column(sa.String(64), primary_key=True)
+    proxy_type = sa.Column(sa.String(64))
+
+    def serialize_id(self):
+        return '{}-{}'.format(self.block_id, self.event_idx)
+
+class MultisigMemberAccount(BaseModel):
+    __tablename__ = 'multisig_member_account'
+
+    address = sa.Column(sa.String(255), primary_key=True)
+    multisig_account_address = sa.Column(sa.String(255), primary_key=True)

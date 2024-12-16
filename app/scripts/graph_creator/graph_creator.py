@@ -4,10 +4,10 @@ import traceback
 from logging.handlers import RotatingFileHandler
 
 import networkx as nx
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker, scoped_session
 
-from ..models.data import Transaction
+from ..models.data import Transaction, ProxyAccount, MultisigMemberAccount
 from timeit import default_timer as timer
 import pytz
 from datetime import datetime
@@ -16,6 +16,8 @@ import os
 # Configure logger
 filename = "graph.log"
 graph_folder = "exported_graph"
+multisig_accounts = {}
+proxy_accounts = {}
 
 logging.basicConfig(level=logging.INFO,
                     handlers=[RotatingFileHandler(filename, maxBytes=1000000000, backupCount=100, mode='a'),
@@ -39,28 +41,77 @@ def print_graph_statistics(graph, description):
     logger.info(f"  Number of edges: {graph.number_of_edges()}")
     logger.info("")
 
+def process_multisig_accounts():
+     # Query to group by multisig_account_address and concatenate addresses
+    results = (
+        db_session.query(
+            MultisigMemberAccount.multisig_account_address,
+            func.group_concat(MultisigMemberAccount.address.op('ORDER BY')(MultisigMemberAccount.address), ',').label('concatenated_addresses')
+        )
+        .group_by(MultisigMemberAccount.multisig_account_address)
+        .all()
+    )
+
+    # Create a dictionary with multisig_account_address as the key and concatenated addresses as the value
+    multisig_dict = {
+        result.multisig_account_address: result.concatenated_addresses for result in results
+    }
+    return multisig_dict
+
+def process_proxy_accounts():
+    results = (
+        db_session.query(ProxyAccount).all()
+    )
+
+    proxy_dict = {}
+    for result in results:
+        if result.proxied_account_address not in proxy_dict:
+            proxy_dict[result.proxied_account_address] = []
+        # This is proxy account address not proxied account address. This is wrong. The value is reversed in the original code.
+        # TODO: Update value to be proxy_dict[result.address] instead after fixing the original code
+        proxy_dict[result.proxied_account_address].append(result.address)
+
+    return proxy_dict
+
 def create_graph(transactions):
     di_graph = nx.MultiDiGraph()
     for row in transactions:
         try:
             date = row.timestamp
+            from_address = row.from_address
+
+            # if proxy_accounts.get(row.from_address) and len(proxy_accounts[row.from_address]) == 1:
+            #     print('Block: ', row.block_id, 'Extrinsic: ', row.extrinsic_idx)
+            #     print('Proxy: ', row.from_address, proxy_accounts[row.from_address])
+            #     from_address = proxy_accounts[row.from_address][0]
+
             di_graph.add_edge(
-                row.from_address,
+                from_address,
                 row.to_address,
                 weight=float(row.value),
                 date=date,
                 fee=float(row.fee)
             )
+            
+            # We are not concerned with row.from_address because it could be a proxy account. 
+            # We are only concerned with the actual account that is being proxied. If it is a multisig account, we will get the multisig member accounts.
+            
+            multisig_member_accounts = []
+            if multisig_accounts.get(from_address):
+                multisig_member_accounts = multisig_accounts[from_address].split(',')
+
+            di_graph.nodes[from_address]["multisig_member_accounts"] = multisig_member_accounts
+            
         except Exception:
             logger.error("Error at transaction id {}-{}".format(row.block_id, row.extrinsic_idx))
     return di_graph
 
 def process_batches(batch_size):
-    start_block = 1000_000
+    start_block = 2_000_000
     end_block = start_block + batch_size
 
     while True:
-        if end_block > 2000_000:
+        if end_block > 3_000_000:
             break
 
         transactions = db_session.query(Transaction).filter(
@@ -133,9 +184,11 @@ if __name__ == '__main__':
     try:
         start = timer()
 
-        batch_size = 100_000
+        batch_size = 1_000_000
 
         logger.info(f"Processing transactions in batches of {batch_size}...")
+        multisig_accounts = process_multisig_accounts()
+        proxy_accounts = process_proxy_accounts()
         process_batches(batch_size)
 
         graph_files = [f for f in os.listdir(graph_folder) if f.endswith('.gpickle')]
