@@ -7,7 +7,7 @@ import networkx as nx
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker, scoped_session
 
-from ..models.data import Transaction, ProxyAccount, MultisigMemberAccount
+from ..models.data import Transaction, ProxyAccount, MultisigMemberAccount, ProxyExtrinsicRealAddress
 from timeit import default_timer as timer
 import pytz
 from datetime import datetime
@@ -75,22 +75,19 @@ def process_proxy_accounts():
 
 def create_graph(transactions):
     di_graph = nx.MultiDiGraph()
-    for row in transactions:
+    for transaction, real_address in transactions:
         try:
-            date = row.timestamp
-            from_address = row.from_address
-
-            # if proxy_accounts.get(row.from_address) and len(proxy_accounts[row.from_address]) == 1:
-            #     print('Block: ', row.block_id, 'Extrinsic: ', row.extrinsic_idx)
-            #     print('Proxy: ', row.from_address, proxy_accounts[row.from_address])
-            #     from_address = proxy_accounts[row.from_address][0]
+            date = transaction.timestamp
+            from_address = transaction.from_address
+            if real_address:
+                from_address = real_address
 
             di_graph.add_edge(
                 from_address,
-                row.to_address,
-                weight=float(row.value),
+                transaction.to_address,
+                weight=float(transaction.value),
                 date=date,
-                fee=float(row.fee)
+                fee=float(transaction.fee)
             )
             
             # We are not concerned with row.from_address because it could be a proxy account. 
@@ -103,7 +100,7 @@ def create_graph(transactions):
             di_graph.nodes[from_address]["multisig_member_accounts"] = multisig_member_accounts
             
         except Exception:
-            logger.error("Error at transaction id {}-{}".format(row.block_id, row.extrinsic_idx))
+            logger.error("Error at transaction id {}-{}".format(transaction.block_id, transaction.extrinsic_idx))
     return di_graph
 
 def process_batches(batch_size):
@@ -111,10 +108,17 @@ def process_batches(batch_size):
     end_block = start_block + batch_size
 
     while True:
-        if end_block > 3_000_000:
+        if end_block > 5_000_000:
             break
 
-        transactions = db_session.query(Transaction).filter(
+        transactions = db_session.query(Transaction, ProxyExtrinsicRealAddress.real_address).outerjoin(
+            ProxyExtrinsicRealAddress,
+            (Transaction.block_id == ProxyExtrinsicRealAddress.block_id) &
+            (Transaction.extrinsic_idx == ProxyExtrinsicRealAddress.extrinsic_idx) &
+            (Transaction.nesting_idx == ProxyExtrinsicRealAddress.nesting_idx) &
+            (Transaction.batch_idx == ProxyExtrinsicRealAddress.batch_idx) &
+            (Transaction.unique_sequence == ProxyExtrinsicRealAddress.unique_sequence)
+        ).filter(
             Transaction.signed == 1,
             Transaction.success == 1,
             Transaction.module_id == 'Balances',
