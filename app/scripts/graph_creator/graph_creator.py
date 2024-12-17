@@ -87,9 +87,9 @@ def create_graph(transactions):
                 transaction.to_address,
                 weight=float(transaction.value),
                 date=date,
-                fee=float(transaction.fee)
+                fee=float(transaction.fee) if transaction.nesting_idx == 0 else 0.0
             )
-            
+
             # We are not concerned with row.from_address because it could be a proxy account. 
             # We are only concerned with the actual account that is being proxied. If it is a multisig account, we will get the multisig member accounts.
             
@@ -104,13 +104,12 @@ def create_graph(transactions):
     return di_graph
 
 def process_batches(batch_size):
-    start_block = 2_000_000
+    start_block = 1_000_000
     end_block = start_block + batch_size
+    last_block = 2_000_500
+    last_iteration = False
 
-    while True:
-        if end_block > 5_000_000:
-            break
-
+    while not last_iteration:
         transactions = db_session.query(Transaction, ProxyExtrinsicRealAddress.real_address).outerjoin(
             ProxyExtrinsicRealAddress,
             (Transaction.block_id == ProxyExtrinsicRealAddress.block_id) &
@@ -146,7 +145,13 @@ def process_batches(batch_size):
         logger.info(f"Batch {start_block}-{end_block - 1} saved: {file_name}")
 
         start_block = end_block
-        end_block += batch_size
+        if end_block == last_block:
+            last_iteration = True
+        elif end_block + batch_size > last_block:
+            end_block = last_block
+        else:
+            end_block += batch_size
+        
 
 def merge_graphs(graph_files):
     logger.info("Merging graphs...")

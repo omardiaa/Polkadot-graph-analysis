@@ -5,8 +5,8 @@ import os
 # Get the directory of the current script
 script_dir = os.path.dirname(__file__)
 # Construct the relative path to the graph file
-# graph_file_path = os.path.join(script_dir, '../../../exported_graph/merged_0.gpickle')
-graph_file_path = os.path.join(script_dir, '../../../exported_graph/2000000_2999999.gpickle')
+graph_file_path = os.path.join(script_dir, '../../../exported_graph/merged_0.gpickle')
+# graph_file_path = os.path.join(script_dir, '../../../exported_graph/20000000_21999999.gpickle')
 
 # Read the graph from the file
 try:
