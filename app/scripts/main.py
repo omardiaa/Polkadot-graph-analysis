@@ -134,6 +134,7 @@ def create_account(address, block, options = {}):
         is_validator = address in session.value
 
     token_decimals = substrate.token_decimals if block.id >= 1248328 else 12
+    # TODO: double check block number (https://wiki.polkadot.network/docs/build-protocol-info#redenomination) I think it should be 888_888
 
     is_proxy = options.get('is_proxy') or False
     proxied = options.get('proxied') or False

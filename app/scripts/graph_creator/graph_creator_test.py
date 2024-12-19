@@ -2,7 +2,7 @@ import unittest
 import networkx as nx
 import os
 from unittest.mock import MagicMock, patch
-from app.scripts.graph_creator.graph_creator import create_graph, process_batches, merge_graphs, db_session, Transaction
+from app.scripts.graph_creator.graph_creator import create_graph, process_batches, merge_graphs, db_session, Transaction, normalize_event
 
 class TestGraphCreator(unittest.TestCase):
 
@@ -141,6 +141,39 @@ class TestGraphCreator(unittest.TestCase):
         with patch('networkx.write_gpickle') as mock_write_gpickle:
             process_batches(batch_size=1)
             mock_write_gpickle.assert_not_called()
+
+    def test_reward_and_claims_account_formats(self):
+        # Test Cases
+        test_events = [
+            [{"type": "AccountId", "value": "136Wp1hy5BMfKnkFYASM1RBN32AmFvmZCYJhE72ENrk41x8j"}, {"type": "Balance", "value": 1374232058}],
+            {"stash": "1497QNdycmxqMi3VJDxZDhaJh4s9tytr5RFWyrLcNse2xqPD", "amount": 673599588404},
+            ["15KNvJQxjw7LtgVjSMe9iRDvHVpUmrj2eASTV9Hxune1ixTp", 1022633433],
+            {"dest": "Staked", "stash": "13iy3oH2urda196uwWVyPpMLrVLhFdLp2q35r9uhfyHxRJns", "amount": 2535915927},
+            {"dest": "Controller", "stash": "1483ac3hJkf1iUHYV85VrC3em7o3nLFpXPv52aGbgA6MVSz1", "amount": 9210991869},
+            {"dest": {"Account": "13FzGLWoueKvUqFePiJgvFYWhH5KckHGtVBXvAX7SBtVZbXu"}, "stash": "14Ns6kKbCoka3MS4Hn6b7oRw9fFejG8RH5rq5j63cWUfpPDJ", "amount": 11318326602223},
+            {"dest": "Stash", "stash": "145ztiWwq5iEdAjVtPvj2qt7f9LDfGhuc3XvURqHwLBTygST", "amount": 3090414050},
+            {"who": "15tvJKvDQKMepMxcdUUZ7gJmPgjSMoyKpgL1um5EAaekv5KE", "amount": 100000000000000, "ethereum_address": "0xc2c2c26961e5560081003bb157549916b21744db"},
+            [{"type": "[U8; 32]","type_name": "AccountId","value": "0xca2dcfa18a6ab2ac4071a14a6d41cefe202bca7a3d4c97d8514f57f8ea5ff5a8"},{"type": "[U8; 20]","type_name": "EthereumAddress","value": "0x0011f97b8a9f4902288c235478d2a5f3aa060073"},{"type": "U128","type_name": "BalanceOf","value": "55057038000000000"}],
+            ["116PWxjZxTj8V6GdJYhc3szV4Yxfk23JGW6SmJa3AHRHEHe", "0xeb0718ce75762eeba4570943d5b2de2afb9085b6", 321019000000000]
+        ]
+        expected_results = [
+             {'address': '136Wp1hy5BMfKnkFYASM1RBN32AmFvmZCYJhE72ENrk41x8j', 'amount': 1374232058},
+             {'address': '1497QNdycmxqMi3VJDxZDhaJh4s9tytr5RFWyrLcNse2xqPD', 'amount': 673599588404},
+             {'address': '15KNvJQxjw7LtgVjSMe9iRDvHVpUmrj2eASTV9Hxune1ixTp', 'amount': 1022633433},
+             {'address': '13iy3oH2urda196uwWVyPpMLrVLhFdLp2q35r9uhfyHxRJns', 'amount': 2535915927},
+             {'address': '1483ac3hJkf1iUHYV85VrC3em7o3nLFpXPv52aGbgA6MVSz1', 'amount': 9210991869},
+             {'address': '13FzGLWoueKvUqFePiJgvFYWhH5KckHGtVBXvAX7SBtVZbXu', 'amount': 11318326602223},
+             {'address': '145ztiWwq5iEdAjVtPvj2qt7f9LDfGhuc3XvURqHwLBTygST', 'amount': 3090414050},
+             {'address': '15tvJKvDQKMepMxcdUUZ7gJmPgjSMoyKpgL1um5EAaekv5KE', 'amount': 100000000000000},
+             {'address': '15a6HKkoBaLwAUTbmN1WqVXKeGZJ9yCUkWqc6BBbvmTB3MAN', 'amount': 55057038000000000},
+             {'address': '116PWxjZxTj8V6GdJYhc3szV4Yxfk23JGW6SmJa3AHRHEHe', 'amount': 321019000000000}
+        ]
+
+        # Run test cases
+        for i, event in enumerate(test_events):
+            normalized = normalize_event(event)
+            print(f"Test Case {i + 1}: {normalized}")
+            self.assertEqual(normalized, expected_results[i])
 
 if __name__ == '__main__':
     unittest.main()
