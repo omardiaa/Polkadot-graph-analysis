@@ -635,10 +635,10 @@ def process_block(block_number):
                     create_account(delegator, block, {'proxied': True})
                     create_account(delegatee, block, {'is_proxy': True})
                     create_proxy_account(delegator, delegatee, proxy_type) # TODO: change to (delegatee, delegator, proxy_type)
-                elif event.value['event_id'] ==  'ProxyRemoved':
+                elif event.value['event_id'] == 'ProxyRemoved':
                     logger.info("Proxy removed")
                     #TODO: remove proxy account, remove account record
-                elif event.value['event_id'] == 'ProxyExecuted':
+                elif event.value['event_id'] == 'ProxyExecuted' and 'err' not in str(event.value['attributes']).lower():
                     extrinsic_idx = event.value['extrinsic_idx']
                     proxy_status_idx[extrinsic_idx] = True
 
@@ -754,8 +754,10 @@ if __name__ == '__main__':
             #         db_session.rollback()
             #         logger.error(traceback.format_exc())
 
+            # BEGIN: Reprocessing blocks from a csv file
             block_ids = []
-            file_path = './migrations/migration_3_add_proxy_real_addresses/proxy_extrinsics.csv'
+            file_path = './migrations_and_scripts/migration_6_fix_proxy_executed_error_blocks/proxy_executed_error_block_ids.csv'
+            
             with open(file_path, mode='r') as file:
                 csv_reader = csv.reader(file)
                 block_ids = [int(row[0]) for row in csv_reader]
@@ -779,6 +781,8 @@ if __name__ == '__main__':
                     db_session.rollback()
                     create_error_log(block_id, traceback.format_exc())
                     logger.error(traceback.format_exc())
+            # END: Reprocessing blocks from a csv file
+            
             
             # for i in range(first_index, first_index + count):
             #     try:
