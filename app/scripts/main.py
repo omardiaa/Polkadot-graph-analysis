@@ -243,6 +243,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         datetime=block.datetime,
         timestamp=block.timestamp
     )
+    # TODO: add all attributes to the transaction object
     
     call_args = extrinsic.value['call']['call_args']
 
@@ -325,6 +326,9 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
 
         if 'address' in extrinsic:
             transaction.from_address = extrinsic.value['address'].replace('0x', '')
+            # TODO [VERY IMPORTANT]: proxy.proxy nested transactions should have from_address = real_address, and all nested extrinsics 
+            #   should have the same real_address.
+            #   All multisigs nested inside proxy accounts have wrong multisig addresses generated.
             transaction.signature = list(extrinsic.value['signature'].values())[0]
             transaction.tip = extrinsic.value['tip'] / 10 ** token_decimals
             transaction.nonce = extrinsic.value['nonce']

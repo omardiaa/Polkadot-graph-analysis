@@ -4,15 +4,18 @@ import traceback
 from logging.handlers import RotatingFileHandler
 
 import networkx as nx
-from sqlalchemy import create_engine, func
+from sqlalchemy import create_engine, func, text
 from sqlalchemy.orm import sessionmaker, scoped_session
 
-from ..models.data import Transaction, Event, ProxyAccount, MultisigMemberAccount, ProxyExtrinsicRealAddress
+from ..models.data import Block, Transaction, Event, ProxyAccount, MultisigMemberAccount, ProxyExtrinsicRealAddress
 from timeit import default_timer as timer
 import pytz
 from datetime import datetime
 import os
 from scalecodec.utils.ss58 import ss58_encode
+
+from sqlalchemy import create_engine, text
+import json
 
 # Configure logger
 filename = "graph.log"
@@ -207,12 +210,13 @@ def parse_staking_rewards(graph, batch_size):
     while not last_iteration:
         logger.info("Processing next batch...")
         events = (
-            db_session.query(Event)
+            db_session.query(Event, Block.timestamp)
+            .join(Block, Event.block_id == Block.id)
             .filter(
-                Event.module_id == "Staking",
-                Event.event_id.in_(["Rewarded", "Reward"]),
-                Event.block_id >= start_block,
-                Event.block_id < end_block
+            Event.module_id == "Staking",
+            Event.event_id.in_(["Rewarded", "Reward"]),
+            Event.block_id >= start_block,
+            Event.block_id < end_block
             )
             .all()
         )
@@ -220,6 +224,8 @@ def parse_staking_rewards(graph, batch_size):
         logger.info(f"Events count: {len(events)} between blocks {start_block} and {end_block}")
 
         for event in events:
+            timestamp = event[1]
+            event = event[0]
             normalized_event = normalize_event(event.attributes)
             normalized_event['amount'] = correct_balance(event.block_id, normalized_event['amount'])
 
@@ -227,7 +233,7 @@ def parse_staking_rewards(graph, batch_size):
                 "StakingRewardSystem",
                 normalized_event['address'],
                 weight=normalized_event['amount'],
-                date=event.block_id
+                date=timestamp #TODO: update to be timestamp
             )
 
         logger.info(f"Graph updated with events from blocks {start_block} to {end_block - 1}")
@@ -305,7 +311,8 @@ def parse_claim_attests(graph, batch_size):
     while not last_iteration:
         logger.info("Processing next batch for claim attests...")
         events = (
-            db_session.query(Event)
+            db_session.query(Event, Block.timestamp)
+            .join(Block, Event.block_id == Block.id)
             .filter(
                 Event.module_id == "Claims",
                 Event.event_id == "Claimed",
@@ -318,12 +325,14 @@ def parse_claim_attests(graph, batch_size):
         logger.info(f"Events count: {len(events)} between blocks {start_block} and {end_block}")
 
         for event in events:
+            timestamp = event[1]
+            event = event[0]
             normalized_event = normalize_event(event.attributes)
             graph.add_edge(
                 "ClaimAttestsSystem",
                 normalized_event['address'],
                 weight=correct_balance(event.block_id, normalized_event['amount']),
-                date=event.block_id
+                date=timestamp
             )
 
         logger.info(f"Graph updated with claim attests from blocks {start_block} to {end_block - 1}")
@@ -339,11 +348,126 @@ def parse_claim_attests(graph, batch_size):
         save_updated_graph(graph)
 
 def parse_system_to_user_transactions(graph, batch_size):
-    updated_graph = parse_staking_rewards(graph, batch_size)
-    # graph_file_name = get_max_version_file_name()
-    # updated_graph = nx.read_gpickle(graph_file_name)
+    # updated_graph = parse_staking_rewards(graph, batch_size)
+    graph_file_name = get_max_version_file_name()
+    updated_graph = nx.read_gpickle(graph_file_name)
     parse_claim_attests(updated_graph, batch_size)
+    return
+
+def parse_event(block_id, event):
+    attributes = json.loads(event)
+    parsed_event = {
+        "from": None,
+        "to": None,
+        "amount": None
+    }
+    if isinstance(attributes, list) and len(attributes) == 3 and all(isinstance(attr, dict) for attr in attributes):
+        parsed_event["from"] = attributes[0]['value']
+        parsed_event["to"] = attributes[1]['value']
+        parsed_event["amount"] = int(attributes[2]['value'])
+    elif isinstance(attributes, list) and len(attributes) == 3 and isinstance(attributes[0], str) and isinstance(attributes[1], str) and isinstance(attributes[2], int):
+        parsed_event["from"] = attributes[0]
+        parsed_event["to"] = attributes[1]
+        parsed_event["amount"] = int(attributes[2])
+    elif isinstance(attributes, dict):
+        parsed_event["from"] = attributes.get("from")
+        parsed_event["to"] = attributes.get("to")
+        parsed_event["amount"] = int(attributes.get("amount"))
+    else:
+        logger.error(f"Invalid event attributes: {attributes}")
+        raise ValueError(f"Invalid event attributes: {attributes}")
+    parsed_event["amount"] = correct_balance(block_id, parsed_event["amount"])
+    return parsed_event
+
+def get_block_ids_to_ignore():
+    query = """
+    SELECT DISTINCT(e2.block_id)
+    FROM (
+        SELECT DISTINCT block_id, extrinsic_idx
+        FROM polkadot_analysis.extrinsic
+        WHERE
+            extrinsic.module_id = "Balances"
+            AND extrinsic.call_id = "transfer_all"
+            AND extrinsic.value = 0
+    ) AS e1
+    JOIN polkadot_analysis.extrinsic as e2
+    ON e1.block_id = e2.block_id
+    AND e1.extrinsic_idx = e2.extrinsic_idx
+    WHERE e2.module_id = "Balances"
+    AND e2.call_id IN ("transfer", "transfer_allow_death", "transfer_keep_alive")
+    """
+    result = db_session.execute(text(query))
+    return {row[0] for row in result}
+
+def process_transfer_all_batches(graph, current_min, current_max, block_ids_to_ignore):
+    query = """
+    SELECT 
+        event.block_id as event_block_id, 
+        event.extrinsic_idx as event_extrinsic_idx,
+        event.event_idx as event_idx,
+        event.module_id as event_module_id,
+        event.event_id as event_event_id,
+        event.attributes as event_attributes,
+        block.timestamp as timestamp
+    FROM (
+        SELECT DISTINCT block_id, extrinsic_idx
+        FROM polkadot_analysis.extrinsic
+        WHERE
+            extrinsic.module_id = "Balances"
+            AND extrinsic.call_id = "transfer_all"
+            AND extrinsic.value = 0
+    ) AS e
+    JOIN polkadot_analysis.event
+        ON e.block_id = event.block_id
+        AND e.extrinsic_idx = event.extrinsic_idx
+	JOIN polkadot_analysis.block
+		ON block.id = e.block_id
+    WHERE event.module_id = "Balances" 
+    AND event.event_id = "Transfer"
+    AND event.block_id >= :current_min AND event.block_id < :current_max
+    """
+    result = db_session.execute(text(query), {'current_min': current_min, 'current_max': current_max})
+    count = 0
+    for row in result:
+        count += 1
+        if row['event_block_id'] in block_ids_to_ignore:
+            logger.warning(f"Ignored block_id: {row['event_block_id']}")
+        else:
+            try:
+                transaction = parse_event(row['event_block_id'], row['event_attributes'])
+                logger.info(f"Block ID: {row['event_block_id']}, Extrinsic Index: {row['event_extrinsic_idx']}, Event Index: {row['event_idx']}, Transaction: {transaction}")
+                graph.add_edge(
+                    transaction["from"],
+                    transaction["to"],
+                    date=row['timestamp'],
+                    # date=transaction[""], # TODO: Update this value
+                    weight=transaction["amount"],
+                )
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Error parsing event attributes for block_id {row['event_block_id']}: {e}")
+                continue
+
+    if count == 0:
+        logger.info(f"No results found for batch {current_min} to {current_max}")
+    else:
+        logger.info(f"Processed {count} transactions for batch {current_min} to {current_max}")
+        save_updated_graph(graph)
+    return graph
     
+def parse_transfer_all_transactions(graph, batch_size):
+    block_ids_to_ignore = get_block_ids_to_ignore()
+    logger.info(f"Block IDs to ignore: {block_ids_to_ignore}")
+
+    # Define batch ranges
+    start_block_id = 0
+    end_block_id = 23_098_211
+    batch_ranges = [(i, min(i + batch_size, end_block_id)) for i in range(start_block_id, end_block_id, batch_size)]
+
+    for current_min, current_max in batch_ranges:
+        logger.info(f"Processing batch from block_id {current_min} to {current_max}")
+        graph = process_transfer_all_batches(graph, current_min, current_max, block_ids_to_ignore)
+
+# General Helper Functions
 def get_max_version_file_name(plus_one=False):
     max_version = max([int(f.split('_')[-1].split('.')[0]) for f in os.listdir(graph_folder) if f.startswith('updated_graph_') and f.endswith('.gpickle')], default=0)
     if plus_one:
@@ -360,29 +484,36 @@ if __name__ == '__main__':
     try:
         start = timer()
 
-        batch_size = 1_000_000
+        batch_size = 3_000_000
+        # batch_size = 23_098_211 #TODO: remove
         final_graph_file = '../../../exported_graph/merged_0.gpickle'
 
-        # Phase 1: Process graph without staking rewards
-        logger.info(f"Processing transactions in batches of {batch_size}...")
-        multisig_accounts = process_multisig_accounts()
-        proxy_accounts = process_proxy_accounts()
-        process_batches(batch_size)
+        # # Phase 1: Process graph without staking rewards
+        # logger.info(f"Processing transactions in batches of {batch_size}...")
+        # multisig_accounts = process_multisig_accounts()
+        # proxy_accounts = process_proxy_accounts()
+        # process_batches(batch_size)
 
-        graph_files = [f for f in os.listdir(graph_folder) if f.endswith('.gpickle')]
+        # graph_files = [f for f in os.listdir(graph_folder) if f.endswith('.gpickle')]
 
-        logger.info("Graph Files: ", graph_files)
-        final_graph_file = merge_graphs(graph_files)
+        # logger.info("Graph Files: ", graph_files)
+        # final_graph_file = merge_graphs(graph_files)
 
-        logger.info(f"Final merged graph saved as {final_graph_file}")
-        logger.info(f"Total Execution Time (seconds): {timer() - start}")
+        # logger.info(f"Final merged graph saved as {final_graph_file}")
+        # logger.info(f"Total Execution Time (seconds): {timer() - start}")
 
-        # Phase 2: Parse staking rewards and Claims.attest
-        script_dir = os.path.dirname(__file__)
-        graph_file_path = os.path.join(script_dir, final_graph_file)
-        graph = nx.read_gpickle(graph_file_path)
+        # # Phase 2: Parse staking rewards and Claims.attest
+        # script_dir = os.path.dirname(__file__)
+        # graph_file_path = os.path.join(script_dir, final_graph_file)
+        # graph = nx.read_gpickle(graph_file_path)
         
-        parse_system_to_user_transactions(graph, batch_size)
+        # parse_system_to_user_transactions(graph, batch_size)
+        
+        # Phase 3: Add transfer_all extrinsics
+        graph_file_name = get_max_version_file_name()
+        graph = nx.read_gpickle(graph_file_name)
+        parse_transfer_all_transactions(graph, batch_size)
+
         
     except Exception:
         db_session.remove()
