@@ -643,7 +643,7 @@ def process_block(block_number):
                     proxy_status_idx[extrinsic_idx] = True
 
             if event.value['module_id'] == 'Multisig':
-                if event.value['event_id'] == 'MultisigExecuted':
+                if event.value['event_id'] == 'MultisigExecuted' and 'err' not in str(event.value['attributes']).lower():
                     create_multisig_account = False
                     if isinstance(event.value['attributes'], list):
                         # [0] is sender address, [2] is multisig address
@@ -756,7 +756,7 @@ if __name__ == '__main__':
 
             # BEGIN: Reprocessing blocks from a csv file
             block_ids = []
-            file_path = './migrations_and_scripts/migration_6_fix_proxy_executed_error_blocks/proxy_executed_error_block_ids.csv'
+            file_path = './migrations_and_scripts/migration_7_fix_multisig_executed_error_blocks/multisig_executed_error_block_ids.csv'
             
             with open(file_path, mode='r') as file:
                 csv_reader = csv.reader(file)

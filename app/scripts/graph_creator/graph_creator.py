@@ -348,7 +348,7 @@ def parse_claim_attests(graph, batch_size):
         save_updated_graph(graph)
 
 def parse_system_to_user_transactions(graph, batch_size):
-    # updated_graph = parse_staking_rewards(graph, batch_size)
+    updated_graph = parse_staking_rewards(graph, batch_size)
     graph_file_name = get_max_version_file_name()
     updated_graph = nx.read_gpickle(graph_file_name)
     parse_claim_attests(updated_graph, batch_size)
@@ -435,14 +435,14 @@ def process_transfer_all_batches(graph, current_min, current_max, block_ids_to_i
         else:
             try:
                 transaction = parse_event(row['event_block_id'], row['event_attributes'])
-                logger.info(f"Block ID: {row['event_block_id']}, Extrinsic Index: {row['event_extrinsic_idx']}, Event Index: {row['event_idx']}, Transaction: {transaction}")
-                graph.add_edge(
-                    transaction["from"],
-                    transaction["to"],
-                    date=row['timestamp'],
-                    # date=transaction[""], # TODO: Update this value
-                    weight=transaction["amount"],
-                )
+                if transaction["from"] != transaction["to"] and transaction["amount"] != 0:
+                    logger.info(f"Block ID: {row['event_block_id']}, Extrinsic Index: {row['event_extrinsic_idx']}, Event Index: {row['event_idx']}, Transaction: {transaction}")
+                    graph.add_edge(
+                        transaction["from"],
+                        transaction["to"],
+                        date=row['timestamp'],
+                        weight=transaction["amount"],
+                    )
             except (json.JSONDecodeError, ValueError) as e:
                 logger.error(f"Error parsing event attributes for block_id {row['event_block_id']}: {e}")
                 continue
@@ -486,28 +486,28 @@ if __name__ == '__main__':
 
         batch_size = 3_000_000
         # batch_size = 23_098_211 #TODO: remove
-        final_graph_file = '../../../exported_graph/merged_0.gpickle'
+        # final_graph_file = '../../../exported_graph/merged_0.gpickle'
+        final_graph_file = 'merged_0.gpickle'
 
-        # # Phase 1: Process graph without staking rewards
-        # logger.info(f"Processing transactions in batches of {batch_size}...")
-        # multisig_accounts = process_multisig_accounts()
-        # proxy_accounts = process_proxy_accounts()
-        # process_batches(batch_size)
+        # Phase 1: Process graph without staking rewards
+        logger.info(f"Processing transactions in batches of {batch_size}...")
+        multisig_accounts = process_multisig_accounts()
+        proxy_accounts = process_proxy_accounts()
+        process_batches(batch_size)
 
-        # graph_files = [f for f in os.listdir(graph_folder) if f.endswith('.gpickle')]
+        graph_files = [f for f in os.listdir(graph_folder) if f.endswith('.gpickle')]
 
-        # logger.info("Graph Files: ", graph_files)
-        # final_graph_file = merge_graphs(graph_files)
+        logger.info("Graph Files: ", graph_files)
+        final_graph_file = merge_graphs(graph_files)
 
-        # logger.info(f"Final merged graph saved as {final_graph_file}")
-        # logger.info(f"Total Execution Time (seconds): {timer() - start}")
+        logger.info(f"Final merged graph saved as {final_graph_file}")
 
-        # # Phase 2: Parse staking rewards and Claims.attest
-        # script_dir = os.path.dirname(__file__)
-        # graph_file_path = os.path.join(script_dir, final_graph_file)
-        # graph = nx.read_gpickle(graph_file_path)
-        
-        # parse_system_to_user_transactions(graph, batch_size)
+        # Phase 2: Parse staking rewards and Claims.attest
+        final_graph_file = '../../../exported_graph/' + final_graph_file
+        script_dir = os.path.dirname(__file__)
+        graph_file_path = os.path.join(script_dir, final_graph_file)
+        graph = nx.read_gpickle(graph_file_path)
+        parse_system_to_user_transactions(graph, batch_size)
         
         # Phase 3: Add transfer_all extrinsics
         graph_file_name = get_max_version_file_name()
