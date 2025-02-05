@@ -51,7 +51,7 @@ def calculate_balances(graph, start_date, end_date, balances):
 # Get the directory of the current script
 script_dir = os.path.dirname(__file__)
 # Construct the relative path to the graph file
-graph_file_path = os.path.join(script_dir, '../../../exported_graph/updated_graph_110.gpickle')
+graph_file_path = os.path.join(script_dir, '../../../exported_graph/updated_graph_26.gpickle')
 print("Reading graph from file:", graph_file_path)
 # Read the graph from the file
 try:
@@ -70,11 +70,10 @@ num_edges = graph.number_of_edges()
 
 print(f"Number of nodes: {num_nodes}")
 print(f"Number of edges: {num_edges}")
-
-
-# Loop through all months from May 2020 to October 2024
+pdb.set_trace()
+# Loop through all months from May 2020 to Jan 2025
 start_year = 2020
-end_year = 2024
+end_year = 2025
 
 monthly_balances = {}
 balances = defaultdict(float)
@@ -84,14 +83,14 @@ for year in range(start_year, end_year + 1):
         # Skip months before May 2020
         if year == 2020 and month < 5:
             continue
-        # Stop after October 2024
-        if year == 2024 and month > 10:
+        # Stop after October 2025
+        if year == 2025 and month > 1:
             break
 
         # Get the first and last day of the month
         start_date = datetime(year, month, 1)
         _, last_day = calendar.monthrange(year, month)
-        end_date = datetime(year, month, last_day)
+        end_date = datetime(year, month, last_day, 23, 59, 59)
 
         # Calculate balances for the month
         balances = calculate_balances(graph, start_date, end_date, balances)

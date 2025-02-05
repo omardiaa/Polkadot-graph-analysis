@@ -110,7 +110,7 @@ def create_graph(transactions):
 def process_batches(batch_size):
     start_block = 0
     end_block = start_block + batch_size
-    last_block = 23_098_211
+    last_block = 24_267_358
     last_iteration = False
 
     while not last_iteration:
@@ -204,7 +204,7 @@ def correct_balance(block_id, balance):
 def parse_staking_rewards(graph, batch_size):
     start_block = 0
     end_block = start_block + batch_size
-    last_block = 23_098_211
+    last_block = 24_267_358
     last_iteration = False
 
     while not last_iteration:
@@ -305,7 +305,7 @@ def normalize_event(data):
 def parse_claim_attests(graph, batch_size):
     start_block = 0
     end_block = start_block + batch_size
-    last_block = 23_098_211
+    last_block = 24_267_358
     last_iteration = False
 
     while not last_iteration:
@@ -460,7 +460,7 @@ def parse_transfer_all_transactions(graph, batch_size):
 
     # Define batch ranges
     start_block_id = 0
-    end_block_id = 23_098_211
+    end_block_id = 24_267_358
     batch_ranges = [(i, min(i + batch_size, end_block_id)) for i in range(start_block_id, end_block_id, batch_size)]
 
     for current_min, current_max in batch_ranges:
@@ -485,7 +485,7 @@ if __name__ == '__main__':
         start = timer()
 
         batch_size = 3_000_000
-        # batch_size = 23_098_211 #TODO: remove
+        # batch_size = 24_267_358 #TODO: remove
         # final_graph_file = '../../../exported_graph/merged_0.gpickle'
         final_graph_file = 'merged_0.gpickle'
 

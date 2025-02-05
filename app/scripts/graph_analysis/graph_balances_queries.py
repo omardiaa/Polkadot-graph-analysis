@@ -9,7 +9,7 @@ def load_balances(folder_path, file_name):
     
     return balances
 
-def get_top_accounts(balances, top_n=10):
+def get_top_accounts(balances, top_n=100):
     sorted_accounts = sorted(balances.items(), key=lambda item: item[1], reverse=True)
     return sorted_accounts[:top_n]
 
@@ -18,7 +18,7 @@ def count_negative_balances(balances):
 
 if __name__ == "__main__":
     folder_path = 'exported_balances'
-    file_name = 'balances_2024_10.json'
+    file_name = 'balances_2025_01.json'
     
     balances = load_balances(folder_path, file_name)
     
