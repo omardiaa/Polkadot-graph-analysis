@@ -243,7 +243,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         datetime=block.datetime,
         timestamp=block.timestamp
     )
-    # TODO: add all attributes to the transaction object
+    # TODO: add all attributes to the transaction object [IMPORTANT]
     
     call_args = extrinsic.value['call']['call_args']
 
