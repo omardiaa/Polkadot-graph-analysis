@@ -87,6 +87,7 @@ class Transaction(BaseModel):
 
     module_id = sa.Column(sa.String(64), index=True)
     call_id = sa.Column(sa.String(64), index=True)
+    call_args = sa.Column(sa.JSON())
 
     success = sa.Column(sa.SmallInteger(), default=0, nullable=False)
     spec_version_id = sa.Column(sa.Integer())

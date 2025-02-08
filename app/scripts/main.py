@@ -237,6 +237,7 @@ def process_single_txn(extrinsic_success, extrinsic_idx, extrinsic, block, batch
         signed=extrinsic.signed,
         module_id=extrinsic.value['call']['call_module'],
         call_id=extrinsic.value["call"]["call_function"],
+        call_args=extrinsic.value['call']['call_args'],
         success=int(extrinsic_success),
         spec_version_id=extrinsic.runtime_config.active_spec_version_id,
         # debug_info=calls,
@@ -756,7 +757,7 @@ if __name__ == '__main__':
 
             # BEGIN: Reprocessing blocks from a csv file
             block_ids = []
-            file_path = './migrations_and_scripts/migration_7_fix_multisig_executed_error_blocks/multisig_executed_error_block_ids.csv'
+            file_path = './migrations_and_scripts/migration_8_add_extrinsics_attribute/payout_stakers_block_ids.csv'
             
             with open(file_path, mode='r') as file:
                 csv_reader = csv.reader(file)
