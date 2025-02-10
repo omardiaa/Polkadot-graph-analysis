@@ -47,7 +47,7 @@ def fetch_payout_stakers():
         SELECT block_id, extrinsic_idx, COUNT(*) as counts, 
                GROUP_CONCAT(call_args SEPARATOR '-separator-') as concat_call_args
         FROM polkadot_analysis.extrinsic
-        WHERE module_id = 'staking' AND call_id = 'payout_stakers' AND success = 1 AND block_id = 2000839
+        WHERE module_id = 'staking' AND call_id = 'payout_stakers' AND success = 1
         GROUP BY block_id, extrinsic_idx
     """
     with connection.cursor() as cursor:
@@ -117,8 +117,13 @@ def process_payout_stakers():
     eras_staking_info = {}
     rows = fetch_payout_stakers()
     era_blocks = load_eras()
-
+    print("Loaded payout_stakers")
+    counter = 0
+    total = len(rows)
     for row in rows:
+        counter = counter + 1
+        if counter % 1000 == 0:
+            print("Processed {} out of {} with percentage: {}%".format(counter, total, counter/total*100))
         block_id, extrinsic_idx, _, concat_call_args = row
         parsed_data = parse_json_separated(concat_call_args)
         validator_era_pairs = []
@@ -152,7 +157,10 @@ def process_payout_stakers():
                 if str(current_era) not in eras_staking_info:
                     eras_staking_info[str(current_era)] = {}
                 
-                start_block = era_blocks[str(current_era)]
+                try:
+                    start_block = era_blocks[str(current_era)]
+                except Exception as e:
+                    import pdb; pdb.set_trace()
                 end_block = era_blocks.get(str(current_era + 1), start_block * 2) # In last iteration, end_block is set to 2 * start_block
                 
                 with connection.cursor() as cursor:
