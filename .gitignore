@@ -4,3 +4,7 @@ exported_balances/
 exported_graph/*
 app/side_scripts/
 config.yaml
+*.pyc
+*.log
+*.gpickle
+*.json

@@ -30,7 +30,7 @@ def build_graph(data):
                     G.add_node(nominator_address, role='nominator')
                 
                 # Add edge with reward as attribute
-                G.add_edge(nominator_address, validator, reward=reward)
+                G.add_edge(nominator_address, validator, reward=reward, era=era)
         print("Processed", counter, "eras")
     return G
 

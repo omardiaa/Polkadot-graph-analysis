@@ -119,6 +119,7 @@ def process_payout_stakers():
     era_blocks = load_eras()
     print("Loaded payout_stakers")
     counter = 0
+    wrong_count = 0
     total = len(rows)
     for row in rows:
         counter = counter + 1
@@ -149,26 +150,49 @@ def process_payout_stakers():
 
         for reward in rewards:
             if reward["address"] == next_validator:
-                current_validator, current_era = next_validator, next_era
-                validator_idx += 1
-                if validator_idx < len(validator_era_pairs):
-                    next_validator, next_era = validator_era_pairs[validator_idx]
+                blocks_produced = []
+
+                # In case of Utility.batch(payout_stakers with same stash (e.g. 2 times), and one fails because validator didn't validate in that era)
+
+                while len(blocks_produced) == 0:
+                    current_validator, current_era = next_validator, next_era
+                    
+                    validator_idx += 1
+                    if validator_idx < len(validator_era_pairs):
+                        next_validator, next_era = validator_era_pairs[validator_idx]
+
+                    if validator_idx > len(validator_era_pairs):
+                        break
+                    if current_era == 0:
+                        start_block = 0
+                    else:
+                        try:
+                            start_block = era_blocks[str(current_era-1)]
+                        except Exception as e:
+                            import pdb; pdb.set_trace()
+                    end_block = era_blocks.get(str(current_era), start_block * 2) # In last iteration, end_block is set to 2 * start_block
+                    
+                    with connection.cursor() as cursor:
+                        cursor.execute("""
+                            SELECT id FROM polkadot_analysis.block 
+                            WHERE author = %s AND id >= %s AND id < %s
+                        """, (current_validator, start_block, end_block))
+                        blocks_produced = [row[0] for row in cursor.fetchall()]
+
+
+                    if len(blocks_produced) == 0:
+                        print("Skipping validator rewards at era {}".format(current_era))
+
+                if len(blocks_produced) == 0:
+                    print("Should not reach here")
+                    break
 
                 if str(current_era) not in eras_staking_info:
                     eras_staking_info[str(current_era)] = {}
                 
-                try:
-                    start_block = era_blocks[str(current_era)]
-                except Exception as e:
-                    import pdb; pdb.set_trace()
-                end_block = era_blocks.get(str(current_era + 1), start_block * 2) # In last iteration, end_block is set to 2 * start_block
-                
-                with connection.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT id FROM polkadot_analysis.block 
-                        WHERE author = %s AND id > %s AND id < %s
-                    """, (current_validator, start_block, end_block))
-                    blocks_produced = [row[0] for row in cursor.fetchall()]
+                if  correct_balance(block_id, reward["amount"]) > 0 and len(blocks_produced) == 0:
+                    wrong_count = wrong_count + 1
+                    print("Wrong count [should not reach here]: ", wrong_count)
 
                 eras_staking_info[str(current_era)][current_validator] = {
                     "reward": correct_balance(block_id, reward["amount"]),
@@ -180,6 +204,9 @@ def process_payout_stakers():
                     "address": reward["address"],
                     "reward": correct_balance(block_id, reward["amount"])
                 })
+
+        if validator_idx != len(validator_era_pairs) and len(rewards) != 0:
+            print("Missing validator in payout_staker events at block {}".format(block_id))
     
     with open("eras_staking_info.json", "w") as file:
         json.dump(eras_staking_info, file, indent=4)
