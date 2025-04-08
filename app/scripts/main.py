@@ -726,8 +726,8 @@ if __name__ == '__main__':
         # if clear.lower() == 'y':
         #     open('polkadot_analysis.log', 'w').close()
 
-        # first_index = validate_index(input('Enter first block index [default=highest block]: '))
-        # count = validate_count(input('Enter block count [default=1]: '))
+        first_index = validate_index(input('Enter first block index [default=highest block]: '))
+        count = validate_count(input('Enter block count [default=1]: '))
 
         if not url:
             url = INTERNAL_URL
@@ -756,47 +756,47 @@ if __name__ == '__main__':
             #         logger.error(traceback.format_exc())
 
             # BEGIN: Reprocessing blocks from a csv file
-            block_ids = []
-            file_path = './migrations_and_scripts/migration_8_add_extrinsics_attribute/payout_stakers_block_ids.csv'
+            # block_ids = []
+            # file_path = './migrations_and_scripts/migration_8_add_extrinsics_attribute/payout_stakers_block_ids.csv'
             
-            with open(file_path, mode='r') as file:
-                csv_reader = csv.reader(file)
-                block_ids = [int(row[0]) for row in csv_reader]
+            # with open(file_path, mode='r') as file:
+            #     csv_reader = csv.reader(file)
+            #     block_ids = [int(row[0]) for row in csv_reader]
 
-            count = 0
-            for block_id in block_ids:
-                try:
-                    Block.query(db_session).filter_by(id=block_id).delete()
-                    Transaction.query(db_session).filter_by(block_id=block_id).delete()
-                    Event.query(db_session).filter_by(block_id=block_id).delete()
-                    db_session.commit()
-
-                    process_block(block_id)
-                    print("Block {} processed successfully".format(block_id))
-                    print("Finished {} blocks out of {} with percentage {}".format(count, len(block_ids), (count/len(block_ids))*100))
-                    count = count + 1
-                except BlockAlreadyAdded:
-                    print("Block Already Added, Skipping Block...")
-                except Exception as err:
-                    # clear the db session
-                    db_session.rollback()
-                    create_error_log(block_id, traceback.format_exc())
-                    logger.error(traceback.format_exc())
-            # END: Reprocessing blocks from a csv file
-            
-            
-            # for i in range(first_index, first_index + count):
+            # count = 0
+            # for block_id in block_ids:
             #     try:
-            #         process_block(i)
+            #         Block.query(db_session).filter_by(id=block_id).delete()
+            #         Transaction.query(db_session).filter_by(block_id=block_id).delete()
+            #         Event.query(db_session).filter_by(block_id=block_id).delete()
+            #         db_session.commit()
+
+            #         process_block(block_id)
+            #         print("Block {} processed successfully".format(block_id))
+            #         print("Finished {} blocks out of {} with percentage {}".format(count, len(block_ids), (count/len(block_ids))*100))
+            #         count = count + 1
             #     except BlockAlreadyAdded:
             #         print("Block Already Added, Skipping Block...")
             #     except Exception as err:
             #         # clear the db session
             #         db_session.rollback()
-            #         create_error_log(i, traceback.format_exc())
+            #         create_error_log(block_id, traceback.format_exc())
             #         logger.error(traceback.format_exc())
+            # END: Reprocessing blocks from a csv file
+            
+            
+            for i in range(first_index, first_index + count):
+                try:
+                    process_block(i)
+                except BlockAlreadyAdded:
+                    print("Block Already Added, Skipping Block...")
+                except Exception as err:
+                    # clear the db session
+                    db_session.rollback()
+                    create_error_log(i, traceback.format_exc())
+                    logger.error(traceback.format_exc())
 
-            # logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
+            logger.info("Block Processing Total Execution Time (seconds): {}".format(timer() - start))
 
         print("End of Execution....")
 
