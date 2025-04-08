@@ -18,7 +18,14 @@ DB_PASSWORD = config["database"]["password"]
 DB_NAME = config["database"]["name"]
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("script_5_get_validators_and_nominators.log"),
+        logging.StreamHandler()
+    ]
+)
 
 # Connect to the database
 connection = pymysql.connect(
@@ -47,7 +54,7 @@ def fetch_payout_stakers():
         SELECT block_id, extrinsic_idx, COUNT(*) as counts, 
                GROUP_CONCAT(call_args SEPARATOR '-separator-') as concat_call_args
         FROM polkadot_analysis.extrinsic
-        WHERE module_id = 'staking' AND call_id = 'payout_stakers' AND success = 1 AND block_id >= 15024700
+        WHERE module_id = 'staking' AND call_id = 'payout_stakers' AND success = 1
         GROUP BY block_id, extrinsic_idx
     """
     with connection.cursor() as cursor:
@@ -95,7 +102,29 @@ def normalize_reward_event(data):
         return result
     except Exception as e:
         logging.error(f"Error processing event: {e}")
+        import pdb; pdb.set_trace()
         return result
+
+def normalize_payout_started_event(data, block_id):
+    result = {"era_index": None, "validator_stash": None}
+    if isinstance(data, list) and len(data) == 2 and isinstance(data[0], dict):
+        # [{..., "value": <era_number>}, {..., "value": <validator_stash>}]
+        result["era_index"] = int(data[0]["value"])
+        result["validator_stash"] = data[1]["value"]
+    elif isinstance(data, list) and len(data) == 2 and isinstance(data[0], int):
+        # [<era_number>, <validator_stash>]
+        result["era_index"] = int(data[0])
+        result["validator_stash"] = data[1]
+    elif isinstance(data, dict):
+        # {"era_index": <era_index>, "validator_stash": <validator_stash>}
+        assert "era_index" in data and "validator_stash" in data, "Invalid PayoutStarted event format"
+        result["era_index"] = int(data["era_index"])
+        result["validator_stash"] = data["validator_stash"]
+    else:
+        logging.error(f"Invalid PayoutStarted event format: {data}")
+        raise ValueError("Invalid PayoutStarted event format")
+
+    return result
 
 def get_blocks_produced_by_validator(validator, era, era_blocks):
     start_block = era_blocks.get(str(era-1), 0) # In first iteration, start_block is set to 0
@@ -123,7 +152,7 @@ def get_validator_rewards_count_in_extrinsic(validator_stash, block_id, extrinsi
         """, (block_id, extrinsic_idx, f'%{validator_stash}%'))
         return cursor.fetchone()[0]
 
-def process_rewards(events):
+def process_rewards(events, block_id):
     last_era_index = None
     last_validator_stash = None
     validator_nominator_rewards = {} # {(validator_stash, era_index): [{nominator_stash: reward}, ...]}
@@ -131,6 +160,7 @@ def process_rewards(events):
     for row in events:
         parsed_attributes = json.loads(row[1])
         if row[0] == "PayoutStarted":
+            parsed_attributes = normalize_payout_started_event(parsed_attributes, block_id)
             last_era_index = parsed_attributes["era_index"]
             last_validator_stash = parsed_attributes["validator_stash"]
             validator_nominator_rewards[last_validator_stash, last_era_index] = []
@@ -146,9 +176,13 @@ def process_rewards(events):
     
     return validator_nominator_rewards
 
-def process_rewards_grouped_by_validator_no_era(events, validators_era_pairs):
+def process_rewards_grouped_by_validator_no_era(events, validators_era_pairs, block_id): 
+    # validator_era_pairs: {validator_stash: [era, ...]}
+
     validator_nominator_rewards = {} # {validator_stash: [[{nominator_stash: <stash>, reward: <value>}, ...], []]}
     # hash of validator_stash to list of eras to list of rewards
+    validator_stash = ""
+    local_wrong_count = 0
     for _, event in events:
         parsed_attributes = json.loads(event)
         reward = normalize_reward_event(parsed_attributes)
@@ -158,17 +192,26 @@ def process_rewards_grouped_by_validator_no_era(events, validators_era_pairs):
                 validator_nominator_rewards[validator_stash] = []
             validator_nominator_rewards[validator_stash].append([])
 
+        if validator_stash == "":
+            local_wrong_count += 1
+            continue
+        
         validator_idx = len(validator_nominator_rewards[validator_stash])-1
+        if validator_idx + 1 > len(validators_era_pairs[validator_stash]): # out of range
+            local_wrong_count += 1
+            return {}, local_wrong_count
+            # Corner Case: where the validator is a nominator for other validators. Example: 534380
+        era_number = validators_era_pairs[validator_stash][validator_idx]
 
         validator_nominator_rewards[validator_stash][-1].append({
             "address": reward["address"],
-            "amount": correct_balance(validators_era_pairs[validator_stash][validator_idx], reward["amount"])
+            "amount": correct_balance(era_number, reward["amount"])
                         # validator_nominator_rewards[validator_stash] is array of all occurrences of the validator
                         # i'th occurrence means the i'th occurrence in validator_nominator_rewards[validator_stash]
                         # len(validator_nominator_rewards[validator_stash])-1 is the last occurrence of the validator
                         # validators_era_pairs[validator_stash] contains all era occurrences for that validator
         })
-    return validator_nominator_rewards
+    return validator_nominator_rewards, local_wrong_count
 
 def produced_blocks(validator_stash, era, era_blocks):
     start_block = era_blocks.get(str(era-1), 0) # In first iteration, start_block is set to 0
@@ -205,11 +248,13 @@ def process_payout_stakers():
     print("Loaded payout_stakers")
     counter = 0
     wrong_count = 0
+    skipped_blocks = []
     total = len(rows)
     for row in rows:
         counter = counter + 1
         if counter % 1000 == 0:
-            print("Processed {} out of {} with percentage: {}%".format(counter, total, counter/total*100))
+            print("Processed {} out of {} with percentage: {}%, correct_count: {}, wrong_count: {}".format(counter, total, counter/total*100, counter, wrong_count))
+
         block_id, extrinsic_idx, _, concat_call_args = row
         parsed_data = parse_json_separated(concat_call_args)
         validator_era_pairs = {}
@@ -239,11 +284,9 @@ def process_payout_stakers():
             for validator in validator_era_pairs.keys():
                 reward_count = get_validator_rewards_count_in_extrinsic(validator, block_id, extrinsic_idx)
                 if reward_count == len(validator_era_pairs[validator]):
-                    print("Matching reward count for validator {} with reward count {}".format(validator, reward_count))
                     filtered_validator_era_pairs[validator] = validator_era_pairs[validator]
                 else:
-                    wrong_count += 1
-                    logging.error(f"Skipping validator {validator} at block {block_id} with extrinsic {extrinsic_idx} due to mismatch in reward count. Expected: {len(validator_era_pairs[validator])}, Found: {reward_count}")
+                    logging.warning(f"Skipping validator {validator} at block {block_id} with extrinsic {extrinsic_idx} due to mismatch in reward count. Expected: {len(validator_era_pairs[validator])}, Found: {reward_count}")
 
             for validator_stash, eras in filtered_validator_era_pairs.items():
                 for era in eras:
@@ -260,10 +303,18 @@ def process_payout_stakers():
                     WHERE block_id = %s AND extrinsic_idx = %s 
                     AND module_id = 'staking' AND (event_id = 'rewarded' OR event_id = 'reward')
                 """, (block_id, extrinsic_idx))
-                rewards = process_rewards_grouped_by_validator_no_era(cursor.fetchall(), validator_era_pairs)
+                rewards, local_wrong_count = process_rewards_grouped_by_validator_no_era(cursor.fetchall(), validator_era_pairs, block_id)
 
+            if local_wrong_count:
+                logging.error(f"Unhandled rewards (around): {local_wrong_count} for block {block_id} extrinsic {extrinsic_idx} with unknown validator")
+                wrong_count += 1
+
+            if rewards == {}:
+                logging.warning(f"Rewards are empty for block {block_id} extrinsic {extrinsic_idx}, Skipping")
+                skipped_blocks.append((block_id, extrinsic_idx))
+                continue
             for validator_stash, eras in filtered_validator_era_pairs.items():
-                # TODO: continue here, divide the rewards between validator and nominators 
+                # TODO: continue here, divide the rewards between validator and nominators
                 assert len(rewards[validator_stash]) == len(eras), "Mismatch in number of rewards and eras for validator {} at block {}".format(validator_stash, block_id)
                 for index_0, era in enumerate(eras):
                     for index_1, reward_details in enumerate(rewards[validator_stash][index_0]):
@@ -285,9 +336,6 @@ def process_payout_stakers():
                                     "address": reward_details["address"],
                                     "reward": reward_details["amount"]
                                 })
-                        
-            print("Done with validator_stash: {} and era: {}".format(validator_stash, era))
-   
         else:
             # PayoutStarted event found, proceed to process rewards
             
@@ -298,7 +346,7 @@ def process_payout_stakers():
                     WHERE block_id = %s AND extrinsic_idx = %s 
                     AND module_id = 'staking' AND (event_id = 'rewarded' OR event_id = 'reward' OR event_id = 'PayoutStarted')
                 """, (block_id, extrinsic_idx))
-                rewards = process_rewards(cursor.fetchall())
+                rewards = process_rewards(cursor.fetchall(), block_id)
 
             for validator_stash, era in rewards.keys():
                 for reward_details in rewards[(validator_stash, era)]:
@@ -323,6 +371,8 @@ def process_payout_stakers():
     with open("eras_staking_info.json", "w") as file:
         json.dump(eras_staking_info, file, indent=4)
     
+    logging.info(f"Processed {counter} rows with {wrong_count} blocks with errors and skipped {len(skipped_blocks)} blocks")
+    logging.info(f"Skipped blocks: {skipped_blocks}")
     logging.info("Saved staking rewards data to eras_staking_info.json")
 
 if __name__ == "__main__":
