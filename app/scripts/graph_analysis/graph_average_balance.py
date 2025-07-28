@@ -6,7 +6,7 @@ file_name = "./exported_balances/balances_2024_10.json"
 
 # Analyze the specified file
 range_counts = defaultdict(int)
-range_size = 10**7/2  # 1M0 ranges
+range_size = 10**7/2  # 1M ranges
 
 try:
     # Read file content

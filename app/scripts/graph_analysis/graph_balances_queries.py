@@ -18,7 +18,7 @@ def count_negative_balances(balances):
 
 if __name__ == "__main__":
     folder_path = 'exported_balances'
-    file_name = 'balances_2025_01.json'
+    file_name = 'balances_2025_04.json'
     
     balances = load_balances(folder_path, file_name)
     

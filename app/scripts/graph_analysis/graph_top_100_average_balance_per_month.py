@@ -3,7 +3,7 @@ import glob
 
 # Initialize start and end dates
 start_year, start_month = 2020, 5
-end_year, end_month = 2025, 1
+end_year, end_month = 2025, 5
 
 # Helper function to generate file names in the specified range
 def generate_file_names(start_year, start_month, end_year, end_month):
@@ -36,11 +36,13 @@ for file_name in file_names:
 
         # Filter positive balances
         positive_balances = [balance for balance in data.values() if balance > 0]
+        # positive_balances = [balance if balance > 0 else 0 for balance in data.values()]
 
         if not positive_balances:
             print(f"No positive balances in {file_name}")
             results.append(0)
             continue
+        positive_balances = [balance for balance in data.values() if balance > 0]
 
         # Sort balances descending
         sorted_balances = sorted(positive_balances, reverse=True)

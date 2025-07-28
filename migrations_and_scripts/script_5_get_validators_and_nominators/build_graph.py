@@ -3,7 +3,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 
 def build_graph(data):
-    G = nx.DiGraph()
+    G = nx.MultiDiGraph()
     
     counter = 0
     for era, validators in data.items():
@@ -11,7 +11,7 @@ def build_graph(data):
         for validator, details in validators.items():
             # Add validator node if not already present
             if validator not in G:
-                G.add_node(validator, role='validator')
+                G.add_node(validator) # , role='validator'
             
             # Ensure the era key exists
             if era not in G.nodes[validator]:
@@ -27,7 +27,7 @@ def build_graph(data):
                 
                 # Add nominator node if not already present
                 if nominator_address not in G:
-                    G.add_node(nominator_address, role='nominator')
+                    G.add_node(nominator_address) # , role='nominator'
                 
                 # Add edge with reward as attribute
                 G.add_edge(nominator_address, validator, reward=reward, era=era)

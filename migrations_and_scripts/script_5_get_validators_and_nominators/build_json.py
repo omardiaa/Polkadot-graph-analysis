@@ -54,7 +54,8 @@ def fetch_payout_stakers():
         SELECT block_id, extrinsic_idx, COUNT(*) as counts, 
                GROUP_CONCAT(call_args SEPARATOR '-separator-') as concat_call_args
         FROM polkadot_analysis.extrinsic
-        WHERE module_id = 'staking' AND call_id = 'payout_stakers' AND success = 1
+        WHERE module_id = 'staking' AND 
+            (call_id = 'payout_stakers' OR call_id = 'payout_stakers_by_page') AND success = 1
         GROUP BY block_id, extrinsic_idx
     """
     with connection.cursor() as cursor:

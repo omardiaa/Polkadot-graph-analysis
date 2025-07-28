@@ -51,7 +51,7 @@ def calculate_balances(graph, start_date, end_date, balances):
 # Get the directory of the current script
 script_dir = os.path.dirname(__file__)
 # Construct the relative path to the graph file
-graph_file_path = os.path.join(script_dir, '../../../exported_graph/updated_graph_26.gpickle')
+graph_file_path = os.path.join(script_dir, '../../../exported_graph/updated_graph_25_543_168.gpickle')
 print("Reading graph from file:", graph_file_path)
 # Read the graph from the file
 try:
@@ -83,8 +83,8 @@ for year in range(start_year, end_year + 1):
         # Skip months before May 2020
         if year == 2020 and month < 5:
             continue
-        # Stop after October 2025
-        if year == 2025 and month > 1:
+        # Stop after April 2025
+        if year == 2025 and month > 4:
             break
 
         # Get the first and last day of the month
