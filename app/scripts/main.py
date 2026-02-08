@@ -118,7 +118,7 @@ def create_error_log(block_id, error_log):
     db_session.commit()
 
 
-def create_account(address, block, options={}):
+def create_account(address, block, validators_list=None, options={}):
     start_time = timer()
     account_info = substrate.query(
         module="System",
@@ -153,12 +153,8 @@ def create_account(address, block, options={}):
         create_error_log(block.id, traceback.format_exc())
         logger.error(traceback.format_exc())
 
-    # returns list of validators at that session of the block
-    session = substrate.query(
-        module="Session", storage_function="Validators", block_hash=block.hash
-    )
-    if session.value:
-        is_validator = address in session.value
+    # Check if address is in the cached validators list for this block
+    is_validator = validators_list is not None and address in validators_list
 
     token_decimals = substrate.token_decimals if block.id >= 1248328 else 12
     # TODO: double check block number (https://wiki.polkadot.network/docs/build-protocol-info#redenomination) I think it should be 888_888
@@ -858,8 +854,8 @@ def process_block(block_number):
                         delegatee = event.value["attributes"][1]
                         proxy_type = event.value["attributes"][2]
 
-                    create_account(delegator, block, {"proxied": True})
-                    create_account(delegatee, block, {"is_proxy": True})
+                    create_account(delegator, block, options={"proxied": True})
+                    create_account(delegatee, block, options={"is_proxy": True})
                     create_proxy_account(
                         delegator, delegatee, proxy_type
                     )  # TODO: change to (delegatee, delegator, proxy_type)
@@ -891,7 +887,7 @@ def process_block(block_number):
                         create_multisig_account = True
 
                     if create_multisig_account:
-                        create_account(multisig, block, {"is_multisig": True})
+                        create_account(multisig, block, options={"is_multisig": True})
 
                     extrinsic_idx = event.value["extrinsic_idx"]
                     multisig_status_idx[extrinsic_idx] = True
@@ -948,9 +944,17 @@ def process_block(block_number):
 
     # handle accounts creation/update
     accounts_time = timer()
+    # Query validators list once per block (cached for all accounts)
+    session = substrate.query(
+        module="Session", storage_function="Validators", block_hash=block.hash
+    )
+    validators_list = session.value if session.value else []
+
     for address in address_list:
-        create_account(address, block)
-    create_account(block.author, block)  # create account for validator/block author
+        create_account(address, block, validators_list)
+    create_account(
+        block.author, block, validators_list
+    )  # create account for validator/block author
     logger.debug(
         f"Block {block_number}: Accounts processing took {timer() - accounts_time:.3f}s ({len(address_list)} accounts)"
     )
