@@ -111,8 +111,8 @@ def create_account(address, block, options = {}):
     identity_judgement = None
 
     try:
-        # Identity Pallet got added to polkadot on Jun 9th 2020, after block 188_837
-        if block.id > 188_837:
+        # Identity Pallet got added to polkadot on Jun 9th 2020, after block 188_837, 
+        if block.id > 188_837 and block.id < 25000000: # TODO: update 25000000 to exact block
             identity = substrate.query(module='Identity', storage_function='IdentityOf',
                                 params=[address], block_hash=block.hash)
             if identity.value:        
@@ -726,8 +726,8 @@ if __name__ == '__main__':
         # if clear.lower() == 'y':
         #     open('polkadot_analysis.log', 'w').close()
 
-        # first_index = validate_index(input('Enter first block index [default=highest block]: '))
-        # count = validate_count(input('Enter block count [default=1]: '))
+        first_index = validate_index(input('Enter first block index [default=highest block]: '))
+        count = validate_count(input('Enter block count [default=1]: '))
 
         if not url:
             url = INTERNAL_URL
@@ -757,7 +757,7 @@ if __name__ == '__main__':
 
             # BEGIN: Reprocessing blocks from a csv file
             block_ids = []
-            file_path = './migrations_and_scripts/migration_9_add_payout_stakers_by_page_call_args/payout_stakers_by_page_block_ids.csv'
+            file_path = '.\migrations_and_scripts\migration_11_import_csv\ids_4.csv'
             
             with open(file_path, mode='r') as file:
                 csv_reader = csv.reader(file)
@@ -782,7 +782,7 @@ if __name__ == '__main__':
                     db_session.rollback()
                     create_error_log(block_id, traceback.format_exc())
                     logger.error(traceback.format_exc())
-            # END: Reprocessing blocks from a csv file
+            # # END: Reprocessing blocks from a csv file
             
             
             # for i in range(first_index, first_index + count):
