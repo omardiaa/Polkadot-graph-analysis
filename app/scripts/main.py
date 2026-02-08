@@ -17,6 +17,7 @@ import traceback
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from timeit import default_timer as timer
+from urllib.request import Request, urlopen
 import json
 import copy
 
@@ -57,6 +58,7 @@ session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 db_session = scoped_session(session_factory)
 
 BLOCK_TRANSFER_FUNCTION = 1205128
+BATCH_SIZE = 10  # Number of blocks to fetch per batch RPC call
 
 # create and configure logger
 filename = "logs/polkadot_analysis_nov.log"
@@ -80,6 +82,114 @@ INTERNAL_URL = "ws://172.22.254.48:9944"
 
 class BlockAlreadyAdded(Exception):
     pass
+
+
+def _rpc_batch(url: str, payloads):
+    """Execute batch JSON-RPC call."""
+    data = json.dumps(payloads).encode("utf-8")
+    req = Request(url, data=data, headers={"Content-Type": "application/json"})
+    with urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _to_int(value):
+    """Convert hex or int value to integer."""
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 16) if value.startswith("0x") else int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _ws_to_http_url(url: str) -> str:
+    """Convert WebSocket URL to HTTP URL for batch RPC."""
+    if url.startswith("wss://"):
+        return url.replace("wss://", "https://")
+    elif url.startswith("ws://"):
+        return url.replace("ws://", "http://")
+    return url
+
+
+def fetch_blocks_batch(block_numbers: list, rpc_url: str) -> dict:
+    """Fetch multiple blocks using JSON-RPC batch calls.
+
+    Returns dict mapping block_number -> block_data (or None if failed).
+    """
+    if not block_numbers:
+        return {}
+
+    http_url = _ws_to_http_url(rpc_url)
+    results = {}
+
+    try:
+        # Stage 1: Fetch block hashes
+        hash_payloads = [
+            {
+                "jsonrpc": "2.0",
+                "id": f"h{bn}",
+                "method": "chain_getBlockHash",
+                "params": [bn],
+            }
+            for bn in block_numbers
+        ]
+        hash_resp = _rpc_batch(http_url, hash_payloads)
+
+        # Build hash map
+        hash_map = {}
+        if isinstance(hash_resp, list):
+            hash_map = {item["id"]: item.get("result") for item in hash_resp}
+
+        # Stage 2: Fetch blocks by hash
+        block_payloads = [
+            {
+                "jsonrpc": "2.0",
+                "id": f"b{bn}",
+                "method": "chain_getBlock",
+                "params": [hash_map.get(f"h{bn}")],
+            }
+            for bn in block_numbers
+            if hash_map.get(f"h{bn}")
+        ]
+
+        if not block_payloads:
+            logger.warning(f"No valid block hashes found for blocks: {block_numbers}")
+            return {bn: None for bn in block_numbers}
+
+        block_resp = _rpc_batch(http_url, block_payloads)
+
+        # Parse block responses
+        if isinstance(block_resp, list):
+            for item in block_resp:
+                block_id = item["id"]
+                bn = int(block_id.replace("b", ""))
+
+                block_data = item.get("result")
+                if block_data and "block" in block_data:
+                    # Format to match substrate.get_block() output
+                    formatted_block = {
+                        "header": block_data["block"]["header"],
+                        "extrinsics": block_data["block"]["extrinsics"],
+                        "block_hash": hash_map.get(f"h{bn}"),
+                    }
+                    results[bn] = formatted_block
+                else:
+                    results[bn] = None
+
+        # Mark any missing blocks as None
+        for bn in block_numbers:
+            if bn not in results:
+                results[bn] = None
+
+    except Exception as e:
+        logger.error(f"Batch RPC failed for blocks {block_numbers}: {e}")
+        logger.error(traceback.format_exc())
+        # Return None for all blocks on batch failure
+        results = {bn: None for bn in block_numbers}
+
+    return results
 
 
 def validate_index(idx):
@@ -657,7 +767,13 @@ def create_transaction(
     return block, addresses
 
 
-def process_block(block_number):
+def process_fetched_block(block_number, block_data):
+    """Process a pre-fetched block's data (events, transactions, accounts).
+
+    Args:
+        block_number: The block number
+        block_data: Pre-fetched block data dict (from batch RPC or substrate.get_block)
+    """
     block_start_time = timer()
 
     check_time = timer()
@@ -665,15 +781,51 @@ def process_block(block_number):
         raise BlockAlreadyAdded(block_number)  # skip if block already exists
     logger.debug(f"Block {block_number}: DB check took {timer() - check_time:.3f}s")
 
-    fetch_time = timer()
-    block = substrate.get_block(block_number=block_number, include_author=True)
-    logger.debug(f"Block {block_number}: Fetch block took {timer() - fetch_time:.3f}s")
-    block_hash = block["header"]["hash"]
-    # logger.info(">>> Processing block {} hash '{}' author: {}".format(block_number, block_hash, block['author']))
+    # Extract block data from pre-fetched data
+    block_hash = block_data.get("block_hash") or block_data["header"]["hash"]
+    block_id = _to_int(block_data["header"]["number"]) or block_number
 
-    block_id = block["header"]["number"]
-    digest_logs = block["header"].get("digest", {}).pop("logs", None)
-    extrinsics_data = block.pop("extrinsics")
+    # Get digest logs - handle both batch RPC and substrate.get_block formats
+    header_digest = block_data["header"].get("digest", {})
+    if isinstance(header_digest, dict):
+        digest_logs = header_digest.pop("logs", None)
+    else:
+        digest_logs = None
+
+    # Decode extrinsics from raw hex if needed (batch RPC returns hex strings)
+    extrinsics_data = block_data.get("extrinsics", [])
+    if extrinsics_data and isinstance(extrinsics_data[0], str):
+        # Batch RPC returns hex strings, need to decode them
+        decoded_extrinsics = []
+        for ext_hex in extrinsics_data:
+            try:
+                extrinsic_obj = substrate.decode_scale(
+                    type_string="Extrinsic",
+                    scale_bytes=ext_hex,
+                    return_scale_obj=True,
+                    block_hash=block_hash,
+                )
+                decoded_extrinsics.append(extrinsic_obj)
+            except Exception as e:
+                logger.error(f"Failed to decode extrinsic in block {block_number}: {e}")
+        extrinsics_data = decoded_extrinsics
+
+    # Get block author - batch RPC doesn't include it, need to derive from logs or query
+    block_author = block_data.get("author")
+    if not block_author:
+        # Try to derive from session validators or use a placeholder
+        # For now, we'll need to query it separately or derive from digest
+        try:
+            # Query current session validators
+            session = substrate.query(
+                module="Session", storage_function="Validators", block_hash=block_hash
+            )
+            validators_list = session.value if session.value else []
+            # The author would be determined by authority_index (from digest logs)
+            # For simplicity, we'll set to None and extract from digest processing
+            block_author = None
+        except Exception:
+            block_author = None
 
     events_time = timer()
     block_events = substrate.get_events(block_hash=block_hash)
@@ -689,10 +841,10 @@ def process_block(block_number):
         id=block_id,
         parent_id=block_id - 1,
         hash=block_hash,
-        parent_hash=block["header"]["parentHash"],
-        state_root=block["header"]["stateRoot"],
-        extrinsics_root=block["header"]["extrinsicsRoot"],
-        author=block["author"],
+        parent_hash=block_data["header"]["parentHash"],
+        state_root=block_data["header"]["stateRoot"],
+        extrinsics_root=block_data["header"]["extrinsicsRoot"],
+        author=block_author,
         count_extrinsics=len(extrinsics_data),
         count_extrinsics_signed=0,
         count_extrinsics_unsigned=0,
@@ -702,46 +854,59 @@ def process_block(block_number):
         count_accounts_new=0,
         count_accounts_reaped=0,
         count_sessions_new=0,
-        count_log=len(digest_logs),
+        count_log=len(digest_logs) if digest_logs else 0,
         spec_version_id=substrate.runtime_version,
     )
 
     # handling block digest/logs
     logs = []
     try:
-        for log_data in digest_logs:
-            if substrate.implements_scaleinfo():
-                if (
-                    "PreRuntime" in log_data
-                    and log_data.value["PreRuntime"][0] == f"0x{b'BABE'.hex()}"
-                ):
-                    babe_predigest = substrate.runtime_config.create_scale_object(
-                        type_string="RawBabePreDigest",
-                        data=ScaleBytes(log_data.value["PreRuntime"][1]),
-                    )
-                    babe_predigest.decode()
-                    block.authority_index = babe_predigest[1].value["authority_index"]
-                    block.slot_number = babe_predigest[1].value["slot_number"]
-                    log_data.value["PreRuntime"] = ("BABE", babe_predigest.value)
+        if digest_logs:
+            for log_data in digest_logs:
+                # Skip decoding if log_data is raw (dict/str) from batch RPC
+                if hasattr(log_data, "value"):
+                    if substrate.implements_scaleinfo():
+                        if (
+                            "PreRuntime" in log_data
+                            and log_data.value["PreRuntime"][0] == f"0x{b'BABE'.hex()}"
+                        ):
+                            babe_predigest = (
+                                substrate.runtime_config.create_scale_object(
+                                    type_string="RawBabePreDigest",
+                                    data=ScaleBytes(log_data.value["PreRuntime"][1]),
+                                )
+                            )
+                            babe_predigest.decode()
+                            block.authority_index = babe_predigest[1].value[
+                                "authority_index"
+                            ]
+                            block.slot_number = babe_predigest[1].value["slot_number"]
+                            log_data.value["PreRuntime"] = (
+                                "BABE",
+                                babe_predigest.value,
+                            )
 
-                elif (
-                    "Seal" in log_data
-                    and log_data.value["Seal"][0] == f"0x{b'BABE'.hex()}"
-                ):
-                    # do nothing
-                    # print("TODO: decode Seal")
-                    log_data.value["Seal"] = ("BABE", log_data.value["Seal"][1])
-            else:
-                if "PreRuntime" in log_data:
-                    # Determine block producer
-                    block.authority_index = int(
-                        log_data.value["PreRuntime"]["data"]["authority_index"]
-                    )
-                    block.slot_number = log_data.value["PreRuntime"]["data"][
-                        "slot_number"
-                    ]
+                        elif (
+                            "Seal" in log_data
+                            and log_data.value["Seal"][0] == f"0x{b'BABE'.hex()}"
+                        ):
+                            # do nothing
+                            # print("TODO: decode Seal")
+                            log_data.value["Seal"] = ("BABE", log_data.value["Seal"][1])
+                    else:
+                        if "PreRuntime" in log_data:
+                            # Determine block producer
+                            block.authority_index = int(
+                                log_data.value["PreRuntime"]["data"]["authority_index"]
+                            )
+                            block.slot_number = log_data.value["PreRuntime"]["data"][
+                                "slot_number"
+                            ]
 
-            logs.append(log_data.value)
+                    logs.append(log_data.value)
+                else:
+                    # Raw digest logs from batch RPC
+                    logs.append(log_data)
 
     except Exception as e:
         # errors due to new way of handling logs as scale_info, new runtime types
@@ -950,11 +1115,18 @@ def process_block(block_number):
     )
     validators_list = session.value if session.value else []
 
+    # If author is missing, try to resolve from authority_index
+    if block.author is None and getattr(block, "authority_index", None) is not None:
+        authority_index = int(block.authority_index)
+        if 0 <= authority_index < len(validators_list):
+            block.author = validators_list[authority_index]
+
     for address in address_list:
         create_account(address, block, validators_list)
-    create_account(
-        block.author, block, validators_list
-    )  # create account for validator/block author
+    if block.author and substrate.is_valid_ss58_address(block.author):
+        create_account(
+            block.author, block, validators_list
+        )  # create account for validator/block author
     logger.debug(
         f"Block {block_number}: Accounts processing took {timer() - accounts_time:.3f}s ({len(address_list)} accounts)"
     )
@@ -967,6 +1139,18 @@ def process_block(block_number):
 
     total_elapsed = timer() - block_start_time
     logger.info(f"Block {block_number}: TOTAL processing time: {total_elapsed:.3f}s")
+
+
+def process_block(block_number):
+    """Fetch and process a single block (backward compatibility wrapper)."""
+    fetch_time = timer()
+    block_data = substrate.get_block(block_number=block_number, include_author=True)
+    logger.debug(f"Block {block_number}: Fetch block took {timer() - fetch_time:.3f}s")
+
+    # Add block_hash to match batch RPC format
+    block_data["block_hash"] = block_data["header"]["hash"]
+
+    process_fetched_block(block_number, block_data)
 
 
 # Main
@@ -1044,49 +1228,94 @@ if __name__ == "__main__":
 
             with open(file_path, mode="r") as file:
                 csv_reader = csv.reader(file)
-                block_ids = [int(row[0]) for row in csv_reader]
+                block_ids = []
+                for row in csv_reader:
+                    if not row:
+                        continue
+                    try:
+                        block_ids.append(int(row[0]))
+                    except ValueError:
+                        # Skip header or invalid rows (e.g., 'block_id')
+                        continue
 
             count = 0
-            for block_id in block_ids:
-                try:
-                    Block.query(db_session).filter_by(id=block_id).delete()
-                    Transaction.query(db_session).filter_by(block_id=block_id).delete()
-                    Event.query(db_session).filter_by(block_id=block_id).delete()
-                    db_session.commit()
+            # Process blocks in batches
+            for i in range(0, len(block_ids), BATCH_SIZE):
+                chunk = block_ids[i : i + BATCH_SIZE]
 
-                    block_timer = timer()
-                    process_block(block_id)
-                    block_elapsed = timer() - block_timer
-                    print(
-                        "Block {} processed successfully in {:.3f}s".format(
-                            block_id, block_elapsed
+                # Fetch batch of blocks
+                batch_fetch_time = timer()
+                batch_blocks = fetch_blocks_batch(chunk, url)
+                logger.info(
+                    f"Fetched batch of {len(chunk)} blocks in {timer() - batch_fetch_time:.3f}s"
+                )
+
+                # Process each block in the batch
+                for block_id in chunk:
+                    try:
+                        block_data = batch_blocks.get(block_id)
+                        if block_data is None:
+                            logger.error(f"Block {block_id} failed to fetch, skipping")
+                            continue
+
+                        Block.query(db_session).filter_by(id=block_id).delete()
+                        Transaction.query(db_session).filter_by(
+                            block_id=block_id
+                        ).delete()
+                        Event.query(db_session).filter_by(block_id=block_id).delete()
+                        db_session.commit()
+
+                        block_timer = timer()
+                        process_fetched_block(block_id, block_data)
+                        block_elapsed = timer() - block_timer
+                        print(
+                            "Block {} processed successfully in {:.3f}s".format(
+                                block_id, block_elapsed
+                            )
                         )
-                    )
-                    print(
-                        "Finished {} blocks out of {} with percentage {:.1f}%".format(
-                            count, len(block_ids), (count / len(block_ids)) * 100
+                        print(
+                            "Finished {} blocks out of {} with percentage {:.1f}%".format(
+                                count, len(block_ids), (count / len(block_ids)) * 100
+                            )
                         )
-                    )
-                    count = count + 1
-                except BlockAlreadyAdded:
-                    print("Block Already Added, Skipping Block...")
-                except Exception as err:
-                    # clear the db session
-                    db_session.rollback()
-                    create_error_log(block_id, traceback.format_exc())
-                    logger.error(traceback.format_exc())
+                        count = count + 1
+                    except BlockAlreadyAdded:
+                        print("Block Already Added, Skipping Block...")
+                    except Exception as err:
+                        # clear the db session
+                        db_session.rollback()
+                        create_error_log(block_id, traceback.format_exc())
+                        logger.error(traceback.format_exc())
             # # END: Reprocessing blocks from a csv file
 
-            # for i in range(first_index, first_index + count):
-            #     try:
-            #         process_block(i)
-            #     except BlockAlreadyAdded:
-            #         print("Block Already Added, Skipping Block...")
-            #     except Exception as err:
-            #         # clear the db session
-            #         db_session.rollback()
-            #         create_error_log(i, traceback.format_exc())
-            #         logger.error(traceback.format_exc())
+            # Process blocks by range in batches
+            block_range = list(range(first_index, first_index + count))
+            for i in range(0, len(block_range), BATCH_SIZE):
+                chunk = block_range[i : i + BATCH_SIZE]
+
+                # Fetch batch of blocks
+                batch_fetch_time = timer()
+                batch_blocks = fetch_blocks_batch(chunk, url)
+                logger.info(
+                    f"Fetched batch of {len(chunk)} blocks ({chunk[0]}-{chunk[-1]}) in {timer() - batch_fetch_time:.3f}s"
+                )
+
+                # Process each block in the batch
+                for block_num in chunk:
+                    try:
+                        block_data = batch_blocks.get(block_num)
+                        if block_data is None:
+                            logger.error(f"Block {block_num} failed to fetch, skipping")
+                            continue
+
+                        process_fetched_block(block_num, block_data)
+                    except BlockAlreadyAdded:
+                        print("Block Already Added, Skipping Block...")
+                    except Exception as err:
+                        # clear the db session
+                        db_session.rollback()
+                        create_error_log(block_num, traceback.format_exc())
+                        logger.error(traceback.format_exc())
 
             logger.info(
                 "Block Processing Total Execution Time (seconds): {}".format(
