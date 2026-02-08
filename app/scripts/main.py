@@ -21,7 +21,7 @@ import json
 import copy
 
 from scalecodec.base import ScaleBytes
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, exists
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import text
 from substrateinterface import SubstrateInterface
@@ -245,9 +245,9 @@ def create_multisig_accounts(multisig_signatories, threshold):
     )
     multi_address = str(multi_address)
     # if multi_address not exist in db:
-    multi_address_exists = (
-        MultisigAccount.query(db_session).filter_by(address=multi_address).count() > 0
-    )
+    multi_address_exists = db_session.query(
+        exists().where(MultisigAccount.address == multi_address)
+    ).scalar()
     if multi_address_exists:
         print("Address {} already exists in Multisig table".format(multi_address))
         return multi_address
@@ -665,7 +665,7 @@ def process_block(block_number):
     block_start_time = timer()
 
     check_time = timer()
-    if Block.query(db_session).filter_by(id=block_number).count() > 0:
+    if db_session.query(exists().where(Block.id == block_number)).scalar():
         raise BlockAlreadyAdded(block_number)  # skip if block already exists
     logger.debug(f"Block {block_number}: DB check took {timer() - check_time:.3f}s")
 
@@ -685,7 +685,7 @@ def process_block(block_number):
         f"Block {block_number}: Fetch events took {timer() - events_time:.3f}s"
     )
 
-    if Block.query(db_session).filter_by(hash=block_hash).count() > 0:
+    if db_session.query(exists().where(Block.hash == block_hash)).scalar():
         raise BlockAlreadyAdded(block_hash)  # skip if block already exists
 
     # new block to be added
@@ -767,16 +767,13 @@ def process_block(block_number):
         "specVersion", 0
     )
     for event in block_events:
-        if (
-            Event.query(db_session)
-            .filter_by(
-                block_id=block_id,
-                extrinsic_idx=event.value["extrinsic_idx"],
-                event_idx=event_idx,
+        if db_session.query(
+            exists().where(
+                (Event.block_id == block_id)
+                & (Event.extrinsic_idx == event.value["extrinsic_idx"])
+                & (Event.event_idx == event_idx)
             )
-            .count()
-            > 0
-        ):
+        ).scalar():
             print(
                 "Event {} for block {}-extrinsic {} already exists".format(
                     event_idx, block_id, event.value["extrinsic_idx"]
@@ -913,12 +910,12 @@ def process_block(block_number):
 
     address_list = set()
     for extrinsic in extrinsics_data:
-        if (
-            Transaction.query(db_session)
-            .filter_by(block_id=block_id, extrinsic_idx=extrinsic_idx)
-            .count()
-            > 0
-        ):
+        if db_session.query(
+            exists().where(
+                (Transaction.block_id == block_id)
+                & (Transaction.extrinsic_idx == extrinsic_idx)
+            )
+        ).scalar():
             print(
                 "Transaction {} for block {} already exists".format(
                     extrinsic_idx, block_id
