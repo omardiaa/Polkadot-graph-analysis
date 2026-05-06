@@ -182,14 +182,18 @@ def fetch_public_proposals(db_connection):
                 if isinstance(arg, dict):
                     name = arg.get("name")
                     value = arg.get("value")
-                    
+
                     # Format 1: proposal with Lookup
-                    if name == "proposal" and isinstance(value, dict) and "Lookup" in value:
+                    if (
+                        name == "proposal"
+                        and isinstance(value, dict)
+                        and "Lookup" in value
+                    ):
                         preimage_hash = value["Lookup"].get("hash")
                     # Format 2: direct proposal_hash
                     elif name == "proposal_hash" and isinstance(value, str):
                         preimage_hash = value
-                    
+
                     if preimage_hash:
                         break
 
@@ -565,11 +569,11 @@ def process_voters(db_connection, referenda_dict):
             continue
 
         call_args = parse_attributes(call_args_str)
-        
+
         # Extract ref_index and vote details
         ref_index = None
         vote_data = None
-        
+
         if isinstance(call_args, list):
             for arg in call_args:
                 if isinstance(arg, dict):
@@ -577,7 +581,7 @@ def process_voters(db_connection, referenda_dict):
                         ref_index = arg.get("value")
                     elif arg.get("name") == "vote":
                         vote_data = arg.get("value")
-        
+
         if ref_index is None or vote_data is None or ref_index not in referenda_dict:
             continue
 
@@ -588,7 +592,7 @@ def process_voters(db_connection, referenda_dict):
             "amount": None,
             "conviction": None,
             "timestamp": timestamp,
-            "delegators": []
+            "delegators": [],
         }
 
         if isinstance(vote_data, dict):
@@ -912,49 +916,53 @@ def process_treasury_proposals(db_connection):
     return treasury_dict
 
 
-def process_treasury_awarded(db_connection, treasury_dict):
-    """Process treasury.awarded events to mark proposals as awarded."""
-    logging.info("Processing treasury awarded events...")
-    
+def process_treasury_status(db_connection, treasury_dict):
+    """Process treasury awarded/rejected/slashed events to set status."""
+    logging.info("Processing treasury status events...")
+
     query = """
         SELECT 
+            event_id,
             attributes
         FROM
             event
         WHERE
-            module_id = 'treasury' AND event_id = 'awarded'
+            module_id = 'treasury' AND event_id IN ('awarded', 'rejected', 'slashed')
     """
-    
+
     with db_connection.cursor() as cursor:
         cursor.execute(query)
         results = cursor.fetchall()
-    
-    awarded_count = 0
-    
+
+    status_counts = {"awarded": 0, "rejected": 0, "slashed": 0}
+
     for row in results:
-        attrs_str = row[0]
+        event_id, attrs_str = row
         attrs = parse_attributes(attrs_str)
-        
+
         if not attrs:
             continue
-        
-        # Extract proposal_index, amount, and account
+
         proposal_index = extract_proposal_index(attrs)
-        amount = extract_value_from_attributes(attrs, "award", "Balance")
-        account = extract_account(attrs)
-        
+        amount = extract_value_from_attributes(attrs, "award", "Balance", "slashed")
+
         if proposal_index is None:
             continue
-        
-        # Find and update the treasury proposal
-        key = (proposal_index, 'treasury')
+
+        key = (proposal_index, "treasury")
         if key in treasury_dict:
-            treasury_dict[key]["status"] = "awarded"
+            treasury_dict[key]["status"] = event_id
             if amount is not None:
                 treasury_dict[key]["amount"] = amount
-            awarded_count += 1
-    
-    logging.info(f"Marked {awarded_count} treasury proposals as awarded")
+            if event_id in status_counts:
+                status_counts[event_id] += 1
+
+    logging.info(
+        "Marked treasury proposals as awarded=%s, rejected=%s, slashed=%s",
+        status_counts["awarded"],
+        status_counts["rejected"],
+        status_counts["slashed"],
+    )
 
 
 # Step 11: Process Tips
@@ -999,11 +1007,11 @@ def process_tips(db_connection, treasury_dict):
             "status": "proposed",
         }
 
-    # Fetch TipClosed events
+    # Fetch TipClosed/TipRetracted/TipRejected events
     query_closed = """
-        SELECT attributes
+        SELECT event_id, attributes
         FROM event
-        WHERE module_id = 'tips' AND event_id = 'TipClosed'
+        WHERE module_id = 'tips' AND event_id IN ('TipClosed', 'TipRetracted')
     """
 
     with db_connection.cursor() as cursor:
@@ -1011,7 +1019,7 @@ def process_tips(db_connection, treasury_dict):
         results = cursor.fetchall()
 
     for row in results:
-        attrs_str = row[0]
+        event_id, attrs_str = row
         attrs = parse_attributes(attrs_str)
 
         tip_hash = extract_value_from_attributes(attrs, "tip_hash", "Hash")
@@ -1022,8 +1030,12 @@ def process_tips(db_connection, treasury_dict):
 
         key = (tip_hash, "tip")
         if key in treasury_dict:
-            treasury_dict[key]["amount"] = payout
-            treasury_dict[key]["status"] = "awarded"
+            if event_id == "TipClosed":
+                treasury_dict[key]["amount"] = payout
+                treasury_dict[key]["status"] = "awarded"
+            elif event_id == "TipRetracted":
+                treasury_dict[key]["amount"] = 0
+                treasury_dict[key]["status"] = "retracted"
 
     logging.info(f"Processed {sum(1 for k in treasury_dict if k[1] == 'tip')} tips")
 
@@ -1058,7 +1070,7 @@ def process_bounties(db_connection, treasury_dict):
             "proposor_account": None,
             "block_id": block_id,
             "type": "bounty",
-            "amount": None,
+            "amount": 0,
             "source": "public",
             "status": "proposed",
         }
@@ -1167,7 +1179,7 @@ def main():
     referenda_dict = match_referenda_to_proposals(db_connection, proposals_dict)
 
     # Step 3: Process preimages
-    process_preimages(db_connection, proposals_dict, substrate)
+    # process_preimages(db_connection, proposals_dict, substrate)
 
     # Step 4: Fetch technical committee proposals
     fetch_tech_committee_proposals(db_connection, proposals_dict)
@@ -1189,7 +1201,7 @@ def main():
 
     # Step 10-12: Process treasury data
     treasury_dict = process_treasury_proposals(db_connection)
-    process_treasury_awarded(db_connection, treasury_dict)
+    process_treasury_status(db_connection, treasury_dict)
     process_tips(db_connection, treasury_dict)
     process_bounties(db_connection, treasury_dict)
 
