@@ -240,28 +240,28 @@ def create_account(address, block, validators_list=None, options={}):
     identity_display = None
     identity_judgement = None
 
-    try:
-        # Identity Pallet got added to polkadot on Jun 9th 2020, after block 188_837,
-        if (
-            block.id > 188_837 and block.id < 25000000
-        ):  # TODO: update 25000000 to exact block
-            identity = substrate.query(
-                module="Identity",
-                storage_function="IdentityOf",
-                params=[address],
-                block_hash=block.hash,
-            )
-            if identity.value:
-                if isinstance(identity.value, tuple):
-                    identity_value = identity.value[0]
-                else:
-                    identity_value = identity.value
+    # try:
+    #     # Identity Pallet got added to polkadot on Jun 9th 2020, after block 188_837,
+    #     if (
+    #         block.id > 188_837 and block.id < 25000000
+    #     ):  # TODO: update 25000000 to exact block
+    #         identity = substrate.query(
+    #             module="Identity",
+    #             storage_function="IdentityOf",
+    #             params=[address],
+    #             block_hash=block.hash,
+    #         )
+    #         if identity.value:
+    #             if isinstance(identity.value, tuple):
+    #                 identity_value = identity.value[0]
+    #             else:
+    #                 identity_value = identity.value
 
-                identity_display = identity_value.get("info")["display"]["Raw"]
-                identity_judgement = ",".join(map(str, identity_value["judgements"]))
-    except Exception:
-        create_error_log(block.id, traceback.format_exc())
-        logger.error(traceback.format_exc())
+    #             identity_display = identity_value.get("info")["display"]["Raw"]
+    #             identity_judgement = ",".join(map(str, identity_value["judgements"]))
+    # except Exception:
+    #     create_error_log(block.id, traceback.format_exc())
+    #     logger.error(traceback.format_exc())
 
     # Check if address is in the cached validators list for this block
     is_validator = validators_list is not None and address in validators_list
@@ -1222,73 +1222,73 @@ if __name__ == "__main__":
             #         db_session.rollback()
             #         logger.error(traceback.format_exc())
 
-            # BEGIN: Reprocessing blocks from a csv file
-            block_ids = []
-            file_path = ".\migrations_and_scripts\migration_11_import_csv\ids_4.csv"
+            # # BEGIN: Reprocessing blocks from a csv file
+            # block_ids = []
+            # file_path = ".\migrations_and_scripts\migration_11_import_csv\ids_8.csv"
 
-            with open(file_path, mode="r") as file:
-                csv_reader = csv.reader(file)
-                block_ids = []
-                for row in csv_reader:
-                    if not row:
-                        continue
-                    try:
-                        block_ids.append(int(row[0]))
-                    except ValueError:
-                        # Skip header or invalid rows (e.g., 'block_id')
-                        continue
+            # with open(file_path, mode="r") as file:
+            #     csv_reader = csv.reader(file)
+            #     block_ids = []
+            #     for row in csv_reader:
+            #         if not row:
+            #             continue
+            #         try:
+            #             block_ids.append(int(row[0]))
+            #         except ValueError:
+            #             # Skip header or invalid rows (e.g., 'block_id')
+            #             continue
 
-            count = 0
-            # Process blocks in batches
-            for i in range(0, len(block_ids), BATCH_SIZE):
-                chunk = block_ids[i : i + BATCH_SIZE]
+            # count = 0
+            # # Process blocks in batches
+            # for i in range(0, len(block_ids), BATCH_SIZE):
+            #     chunk = block_ids[i : i + BATCH_SIZE]
 
-                # Fetch batch of blocks
-                batch_fetch_time = timer()
-                batch_blocks = fetch_blocks_batch(chunk, url)
-                logger.info(
-                    f"Fetched batch of {len(chunk)} blocks in {timer() - batch_fetch_time:.3f}s"
-                )
+            #     # Fetch batch of blocks
+            #     batch_fetch_time = timer()
+            #     batch_blocks = fetch_blocks_batch(chunk, url)
+            #     logger.info(
+            #         f"Fetched batch of {len(chunk)} blocks in {timer() - batch_fetch_time:.3f}s"
+            #     )
 
-                # Process each block in the batch
-                for block_id in chunk:
-                    try:
-                        block_data = batch_blocks.get(block_id)
-                        if block_data is None:
-                            logger.error(f"Block {block_id} failed to fetch, skipping")
-                            continue
+            #     # Process each block in the batch
+            #     for block_id in chunk:
+            #         try:
+            #             block_data = batch_blocks.get(block_id)
+            #             if block_data is None:
+            #                 logger.error(f"Block {block_id} failed to fetch, skipping")
+            #                 continue
 
-                        Block.query(db_session).filter_by(id=block_id).delete()
-                        Transaction.query(db_session).filter_by(
-                            block_id=block_id
-                        ).delete()
-                        Event.query(db_session).filter_by(block_id=block_id).delete()
-                        db_session.commit()
+            #             Block.query(db_session).filter_by(id=block_id).delete()
+            #             Transaction.query(db_session).filter_by(
+            #                 block_id=block_id
+            #             ).delete()
+            #             Event.query(db_session).filter_by(block_id=block_id).delete()
+            #             db_session.commit()
 
-                        block_timer = timer()
-                        process_fetched_block(block_id, block_data)
-                        block_elapsed = timer() - block_timer
-                        print(
-                            "Block {} processed successfully in {:.3f}s".format(
-                                block_id, block_elapsed
-                            )
-                        )
-                        print(
-                            "Finished {} blocks out of {} with percentage {:.1f}%".format(
-                                count, len(block_ids), (count / len(block_ids)) * 100
-                            )
-                        )
-                        count = count + 1
-                    except BlockAlreadyAdded:
-                        print("Block Already Added, Skipping Block...")
-                    except Exception as err:
-                        # clear the db session
-                        db_session.rollback()
-                        create_error_log(block_id, traceback.format_exc())
-                        logger.error(traceback.format_exc())
-            # # END: Reprocessing blocks from a csv file
+            #             block_timer = timer()
+            #             process_fetched_block(block_id, block_data)
+            #             block_elapsed = timer() - block_timer
+            #             print(
+            #                 "Block {} processed successfully in {:.3f}s".format(
+            #                     block_id, block_elapsed
+            #                 )
+            #             )
+            #             print(
+            #                 "Finished {} blocks out of {} with percentage {:.1f}%".format(
+            #                     count, len(block_ids), (count / len(block_ids)) * 100
+            #                 )
+            #             )
+            #             count = count + 1
+            #         except BlockAlreadyAdded:
+            #             print("Block Already Added, Skipping Block...")
+            #         except Exception as err:
+            #             # clear the db session
+            #             db_session.rollback()
+            #             create_error_log(block_id, traceback.format_exc())
+            #             logger.error(traceback.format_exc())
+            # # # END: Reprocessing blocks from a csv file
 
-            # Process blocks by range in batches
+            # # Process blocks by range in batches
             block_range = list(range(first_index, first_index + count))
             for i in range(0, len(block_range), BATCH_SIZE):
                 chunk = block_range[i : i + BATCH_SIZE]
