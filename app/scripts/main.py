@@ -1308,8 +1308,10 @@ if __name__ == "__main__":
                             logger.error(f"Block {block_num} failed to fetch, skipping")
                             continue
 
+                        # import pdb; pdb.set_trace()
                         process_fetched_block(block_num, block_data)
                     except BlockAlreadyAdded:
+
                         print("Block Already Added, Skipping Block...")
                     except Exception as err:
                         # clear the db session
